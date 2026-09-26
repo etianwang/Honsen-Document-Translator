@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "check:release-secrets": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/check-release-secrets.ps1",
+    "write:release-checksums": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/write-release-checksums.ps1",
     "tauri": "tauri"
   },
   "dependencies": {
