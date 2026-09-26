@@ -6,7 +6,7 @@ Audited: 2026-09-26. This is an MVP codebase, not production ready.
 | --- | --- | --- | --- | --- | --- |
 | Architecture | PARTIAL | Packages separate parser, layout, translation, DOCX | UI orchestrates work directly | Add cancellable pipeline service | P0 |
 | DIR | PARTIAL | Text, table, image and sections modelled | no per-page issues, OCR layout or cache schema | extend versioned analysis/issue models | P0 |
-| PDF Parser | PARTIAL | PDF.js extracts basic text/RGB images; non-PDF and password errors are normalized | no password entry, unsupported-content issue reporting or per-page recovery | parser diagnostics and page recovery | P0 |
+| PDF Parser | PARTIAL | PDF.js extracts basic text/RGB images; non-PDF/password errors are normalized; page text/image failures are recorded and shown without aborting usable pages | no password entry or real damaged/complex fixture coverage | parser diagnostics and recovery fixtures | P0 |
 | Layout Engine | PARTIAL | basic lines, paragraphs, simple tables, repeated header/footer | no columns, lists, shapes or reliable reading order | deterministic fallbacks and issues | P1 |
 | Font Resolver | MISSING | raw font hint only | missing glyphs and incorrect styles | resolver and fallback policy | P1 |
 | DOCX Engine | PARTIAL | paragraphs, tables, RGB images, headers/footer/page numbers; validates mandatory OOXML parts/relationships before export | no office-level fidelity validation or section fidelity | rendered fidelity and package relationship coverage | P0 |
@@ -15,7 +15,7 @@ Audited: 2026-09-26. This is an MVP codebase, not production ready.
 | PDF Export | PARTIAL | LibreOffice attempt then Word COM fallback | no discovery, timeout or structured diagnostics | exporter service and detection | P0 |
 | Frontend | PARTIAL | open, translate, preview, export controls | no settings, cancellation, drag/drop, issues panel | stateful pipeline UI | P1 |
 | Tauri / Filesystem | PARTIAL | dialog-mediated read/write permissions are explicit; no broad static filesystem scope | no project workspace or persistence boundary | explicit project workspace commands | P0 |
-| State / persistence | MISSING | React state only | work lost on close | local project workspace and autosave | P0 |
+| State / persistence | PARTIAL | user-saveable project JSON restores document/settings and source preview when its path remains valid | no autosave, project workspace, relocation recovery | workspace and autosave | P0 |
 | Logging / errors | MISSING | user-facing string errors | no diagnostics or page recovery | structured redacted logs and typed errors | P0 |
 | Testing | PARTIAL | 10 unit/integration-style tests | no E2E, visual diff, OCR or large-file tests | release test suites and golden fixtures | P1 |
 | Performance | MISSING | synchronous client-side flow | large documents can freeze UI | background pipeline and bounded concurrency | P1 |

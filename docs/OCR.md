@@ -1,6 +1,6 @@
 # OCR Language Support
 
-`src-tauri/resources/tessdata` now contains `osd.traineddata` and the 21 language packs below (about 77.4 MB total), sourced from Tesseract's official `tessdata_fast` project. The production installer must additionally bundle the Tesseract and Poppler executables.
+`src-tauri/resources/tessdata` contains `osd.traineddata` and the 21 language packs below (about 77.4 MB total), sourced from Tesseract's official `tessdata_fast` project. The application resources additionally stage Tesseract and Poppler executables with their Windows runtime dependencies. Before a formal release, this still requires a clean-machine installation test and third-party redistribution-license review.
 
 | UI language | Tesseract pack | Text direction |
 | --- | --- | --- |

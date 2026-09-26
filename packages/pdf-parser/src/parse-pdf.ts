@@ -1,6 +1,6 @@
 import { getDocument, OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PDFDocumentProxy, TextItem } from "pdfjs-dist/types/src/display/api";
-import type { ImageBlock, RawDocument, RawPage, RawTextItem } from "@pdf-translator/document-model";
+import type { DocumentIssue, ImageBlock, RawDocument, RawPage, RawTextItem } from "@pdf-translator/document-model";
 
 export async function parsePdf(data: Uint8Array, sourcePath: string): Promise<RawDocument> {
   if (!containsPdfHeader(data)) throw new Error("INVALID_PDF: The selected file does not contain a PDF header.");
@@ -10,17 +10,24 @@ export async function parsePdf(data: Uint8Array, sourcePath: string): Promise<Ra
   } catch (error: unknown) {
     throw normalizePdfError(error);
   }
-  const pages: RawPage[] = [];
+  const pages: RawPage[] = []; const issues: DocumentIssue[] = [];
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
+    let page;
+    try { page = await pdf.getPage(pageNumber); }
+    catch (error: unknown) { issues.push(normalizePdfPageError(error, pageNumber)); continue; }
     const viewport = page.getViewport({ scale: 1 });
-    const content = await page.getTextContent();
+    let content;
+    try { content = await page.getTextContent(); }
+    catch (error: unknown) { issues.push(normalizePdfPageError(error, pageNumber)); content = { items: [] }; }
     const textItems = content.items.flatMap((item, index) =>
       "str" in item && item.str.trim() ? [toRawTextItem(item, index, pageNumber)] : [],
     );
-    pages.push({ number: pageNumber, width: viewport.width, height: viewport.height, rotation: page.rotate, textItems, images: await extractImages(page, pageNumber) });
+    let images: ImageBlock[] = [];
+    try { images = await extractImages(page, pageNumber); }
+    catch (error: unknown) { issues.push(normalizePdfPageError(error, pageNumber, "PDF_IMAGE_EXTRACTION_FAILED")); }
+    pages.push({ number: pageNumber, width: viewport.width, height: viewport.height, rotation: page.rotate, textItems, images });
   }
-  return { sourcePath, pages };
+  return { sourcePath, pages, issues };
 }
 
 function containsPdfHeader(data: Uint8Array): boolean {
@@ -36,6 +43,10 @@ export function normalizePdfError(error: unknown): Error {
   const message = error instanceof Error ? error.message : "";
   if (name === "PasswordException" || /password/i.test(message)) return new Error("ENCRYPTED_PDF: This PDF is password protected.");
   return new Error("PDF_PARSE_FAILED: The PDF could not be parsed.");
+}
+
+export function normalizePdfPageError(_error: unknown, pageNumber: number, code = "PDF_PAGE_PARSE_FAILED"): DocumentIssue {
+  return { code, pageNumber, message: `第 ${pageNumber} 页无法完全解析，已跳过无法读取的内容。` };
 }
 
 async function extractImages(page: { getOperatorList(): Promise<{ fnArray: number[]; argsArray: (unknown[] | null)[] }>; objs: unknown }, pageNumber: number): Promise<ImageBlock[]> {

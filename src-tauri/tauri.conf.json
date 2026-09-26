@@ -31,6 +31,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/tessdata/*"]
+    "resources": ["resources/tessdata/*", "resources/bin/tesseract/*", "resources/bin/poppler/*"]
   }
 }

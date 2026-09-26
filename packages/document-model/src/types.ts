@@ -1,8 +1,9 @@
 export interface BoundingBox { x: number; y: number; width: number; height: number; }
+export interface DocumentIssue { code: string; message: string; pageNumber?: number; }
 export type TextDirection = "ltr" | "rtl";
 export interface RawTextItem { id: string; text: string; bbox: BoundingBox; fontName: string; fontSize: number; rotation: number; direction?: TextDirection; }
 export interface RawPage { number: number; width: number; height: number; rotation: number; textItems: RawTextItem[]; images?: ImageBlock[]; }
-export interface RawDocument { sourcePath: string; pages: RawPage[]; }
+export interface RawDocument { sourcePath: string; pages: RawPage[]; issues?: DocumentIssue[]; }
 
 export interface TextStyle { fontFamily?: string; originalFontName?: string; fontSize?: number; fontWeight?: number; bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean; color?: string; backgroundColor?: string; letterSpacing?: number; baselineShift?: number; rotation?: number; }
 export interface TextRun { id: string; bbox: BoundingBox; text: string; translatedText?: string; style: TextStyle; }
@@ -21,7 +22,7 @@ export interface PageMargins { top: number; right: number; bottom: number; left:
 export interface DocumentPage { number: number; width: number; height: number; rotation: number; margins: PageMargins; blocks: DocumentBlock[]; }
 export interface HeaderFooter { kind: "header" | "footer"; paragraphs: ParagraphModel[]; }
 export interface DocumentSection { id: string; pageNumbers: number[]; pageSize: { width: number; height: number }; margins: PageMargins; headers: HeaderFooter[]; footers: HeaderFooter[]; }
-export interface DocumentModel { version: 1; sourcePath: string; pages: DocumentPage[]; sections: DocumentSection[]; }
+export interface DocumentModel { version: 1; sourcePath: string; pages: DocumentPage[]; sections: DocumentSection[]; issues?: DocumentIssue[]; }
 export interface ResolvedFont { originalName: string; normalizedName: string; family: string; available: boolean; fallback?: string; }
 export interface PageAnalysis { pageNumber: number; type: "text" | "scanned" | "hybrid"; confidence: number; }
 export interface OcrPageInput { pageNumber: number; imagePath: string; pageWidth?: number; pageHeight?: number; language?: string; }
@@ -31,7 +32,8 @@ export interface OcrProvider { recognizePage(input: OcrPageInput): Promise<OcrPa
 export interface TranslationSegment { id: string; sourceText: string; sourceLanguage?: string; targetLanguage: string; context?: string; elementIds: string[]; }
 export interface TranslationRequest { segments: TranslationSegment[]; }
 export interface TranslationResult { translations: Array<{ segmentId: string; translatedText: string }>; }
-export interface Translator { translate(request: TranslationRequest): Promise<TranslationResult>; }
+export interface TranslationOptions { signal?: AbortSignal; }
+export interface Translator { translate(request: TranslationRequest, options?: TranslationOptions): Promise<TranslationResult>; }
 export interface LayoutFitOptions { minFontScale: number; maxExpansionRatio: number; allowLineReflow: boolean; }
 export interface PdfExportResult { outputPath: string; }
 export interface PdfExporter { exportDocx(docxPath: string, outputPath: string): Promise<PdfExportResult>; }

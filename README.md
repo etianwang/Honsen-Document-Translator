@@ -14,9 +14,11 @@ The renderer never reads this file or sends the key to JavaScript. The Tauri bac
 
 ## OCR
 
-Scanned PDF pages use local Poppler rendering and Tesseract OCR; no document is sent to an OCR cloud service. The application bundles 21 language packs plus Tesseract's orientation-and-script detector, but development currently expects `pdftoppm` on `PATH` and Tesseract at `C:\Program Files\Tesseract-OCR\tesseract.exe`. A production installer must still bundle the Poppler and Tesseract executables before release.
+Scanned PDF pages use local Poppler rendering and Tesseract OCR; no document is sent to an OCR cloud service. The application resources bundle Poppler, Tesseract, 21 language packs, and Tesseract's orientation-and-script detector. The release gate still requires a clean-machine installation test and a third-party redistribution-license review.
 
 Only pages classified as fully scanned are sent through OCR. For hybrid PDFs that already contain selectable text, embedded images, signatures, and seals remain part of the original page instead of being OCR-translated. See [the OCR policy](docs/OCR.md).
+
+See [Privacy](docs/PRIVACY.md) for the local-processing and DeepL data-flow policy.
 
 ## Development and verification
 

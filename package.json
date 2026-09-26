@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "preview": "vite preview",
+    "check:release-secrets": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/check-release-secrets.ps1",
     "tauri": "tauri"
   },
   "dependencies": {

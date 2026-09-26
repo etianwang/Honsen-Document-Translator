@@ -128,7 +128,7 @@ fn ocr_pdf_page(request: OcrPdfRequest) -> Result<OcrPdfResponse, String> {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_millis();
     let prefix = std::env::temp_dir().join(format!("honsen-ocr-{nonce}"));
     let image = prefix.with_extension("png");
-    let render = Command::new("pdftoppm").args(["-f", &request.page_number.to_string(), "-l", &request.page_number.to_string(), "-r", "300", "-png", "-singlefile", source.to_string_lossy().as_ref(), prefix.to_string_lossy().as_ref()]).output()
+    let render = Command::new(pdftoppm_path()).args(["-f", &request.page_number.to_string(), "-l", &request.page_number.to_string(), "-r", "300", "-png", "-singlefile", source.to_string_lossy().as_ref(), prefix.to_string_lossy().as_ref()]).output()
         .map_err(|_| "OCR_ENGINE_UNAVAILABLE: Poppler pdftoppm was not found.".to_owned())?;
     if !render.status.success() || !image.is_file() { return Err("OCR_RENDER_FAILED: Could not render the PDF page for OCR.".into()); }
     let language = tesseract_language(request.language.as_deref())?;
@@ -144,8 +144,22 @@ fn ocr_pdf_page(request: OcrPdfRequest) -> Result<OcrPdfResponse, String> {
 }
 
 fn tesseract_path() -> PathBuf {
-    let bundled = std::env::current_exe().ok().and_then(|path| path.parent().map(|parent| parent.join("tesseract.exe")));
-    bundled.filter(|path| path.is_file()).unwrap_or_else(|| PathBuf::from(r"C:\Program Files\Tesseract-OCR\tesseract.exe"))
+    bundled_resource("bin/tesseract/tesseract.exe").unwrap_or_else(|| PathBuf::from(r"C:\Program Files\Tesseract-OCR\tesseract.exe"))
+}
+
+fn pdftoppm_path() -> PathBuf {
+    bundled_resource("bin/poppler/pdftoppm.exe").unwrap_or_else(|| PathBuf::from("pdftoppm"))
+}
+
+fn bundled_resource(relative: &str) -> Option<PathBuf> {
+    let current = std::env::current_dir().ok();
+    let executable = std::env::current_exe().ok().and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
+    [
+        current.as_ref().map(|path| path.join("resources").join(relative)),
+        current.as_ref().and_then(|path| path.parent().map(|parent| parent.join("src-tauri/resources").join(relative))),
+        executable.as_ref().map(|path| path.join("resources").join(relative)),
+        executable.as_ref().map(|path| path.join("resources/resources").join(relative)),
+    ].into_iter().flatten().find(|path| path.is_file())
 }
 
 fn tessdata_dir() -> Option<PathBuf> {
@@ -281,6 +295,12 @@ mod tests {
         assert_eq!(result.text[0].text, "Hello");
         assert_eq!(result.text[0].bbox.x, 60.0);
         assert_eq!(result.text[0].bbox.y, 780.0);
+    }
+
+    #[test]
+    fn prefers_bundled_ocr_executables() {
+        assert!(tesseract_path().is_file());
+        assert!(pdftoppm_path().is_file());
     }
 
     #[test]

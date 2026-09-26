@@ -6,7 +6,7 @@ import { translateDocument } from "@pdf-translator/translation-engine";
 export type PageType = "text" | "scanned" | "hybrid";
 export interface DocumentAnalysis { pageTypes: Array<{ pageNumber: number; type: PageType; confidence: number }>; }
 export interface PipelineOptions { targetLanguage?: string; translator?: Translator; ocrProvider?: OcrProvider; ocrEnabled?: boolean; ocrLanguage?: string; signal?: AbortSignal; onProgress?: (stage: "analyzing" | "ocr" | "layout" | "translating" | "completed", completed: number, total: number) => void; }
-export interface ProcessingResult { analysis: DocumentAnalysis; document: DocumentModel; }
+export interface ProcessingResult { analysis: DocumentAnalysis; document: DocumentModel; issues: import("@pdf-translator/document-model").DocumentIssue[]; }
 
 export class DocumentPipeline {
   async analyze(input: Uint8Array, sourcePath: string, signal?: AbortSignal): Promise<{ raw: RawDocument; analysis: DocumentAnalysis }> {
@@ -24,9 +24,9 @@ export class DocumentPipeline {
         options.onProgress?.("ocr", index + 1, scanned.length);
       }
     }
-    options.onProgress?.("layout", 0, raw.pages.length); let document = reconstructDocument(raw); options.onProgress?.("layout", raw.pages.length, raw.pages.length);
-    if (options.translator && options.targetLanguage) { throwIfAborted(options.signal); options.onProgress?.("translating", 0, 1); document = await translateDocument(document, options.translator, options.targetLanguage); options.onProgress?.("translating", 1, 1); }
-    options.onProgress?.("completed", 1, 1); return { analysis, document };
+    options.onProgress?.("layout", 0, raw.pages.length); let document = { ...reconstructDocument(raw), issues: raw.issues ?? [] }; options.onProgress?.("layout", raw.pages.length, raw.pages.length);
+    if (options.translator && options.targetLanguage) { throwIfAborted(options.signal); options.onProgress?.("translating", 0, 1); document = { ...(await translateDocument(document, options.translator, options.targetLanguage)), issues: raw.issues ?? [] }; options.onProgress?.("translating", 1, 1); }
+    options.onProgress?.("completed", 1, 1); return { analysis, document, issues: raw.issues ?? [] };
   }
 }
 

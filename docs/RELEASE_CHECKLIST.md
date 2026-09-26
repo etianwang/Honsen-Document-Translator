@@ -1,20 +1,16 @@
 # Release Checklist
 
-Do not release while any P0 item in `PRODUCTION_AUDIT.md` remains open.
+The authoritative, execution-ready checklist is [TASKS.md](TASKS.md). Do not release while any P0 task there remains unchecked.
 
-- [x] lint (2026-09-26)
-- [x] typecheck (2026-09-26)
-- [x] unit tests: 11 TypeScript + 2 Rust boundary tests (2026-09-26)
-- [ ] integration tests
-- [ ] E2E happy path
-- [ ] visual regression
-- [ ] large-file test
-- [x] local OCR engine health check: image PDF → Poppler → Tesseract (2026-09-26; English development language pack)
-- [ ] DeepL integration test without exposing a key
-- [x] DOCX OOXML package validation (2026-09-26; required parts and main relationship)
-- [ ] PDF export with LibreOffice
-- [x] debug installer build: MSI + NSIS (2026-09-26; unsigned, not releasable)
+Current verified baseline (2026-09-26):
+
+- [x] lint and TypeScript typecheck
+- [x] 23 TypeScript tests and 4 Rust regular tests
+- [x] local OCR health check: image PDF → Poppler → Tesseract
+- [x] real minimal DeepL integration check without outputting the API Key
+- [x] DOCX OOXML package validation
+- [x] unsigned debug installer build: MSI + NSIS
 - [ ] clean install / upgrade / uninstall
-- [ ] GUI human-path regression (desktop automation unavailable in this environment)
-- [ ] no bundled API key or secret
-- [ ] privacy and dependency audit
+- [ ] E2E happy path, visual regression, large-file test
+- [x] source/Git key scan, production dependency audit and privacy data-flow documentation
+- [ ] final installer artifact scan and third-party redistribution-license audit

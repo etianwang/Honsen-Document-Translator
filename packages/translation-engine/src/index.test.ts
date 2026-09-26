@@ -10,4 +10,10 @@ describe("MockTranslator", () => {
     if (block?.type !== "text") throw new Error("Expected a text block");
     expect(block.paragraphs[0]?.lines[0]?.runs[0]?.translatedText).toBe("[TRANSLATED] Bonjour");
   });
+
+  it("does not start a translation after cancellation", async () => {
+    const model: DocumentModel = { version: 1, sourcePath: "fixture.pdf", sections: [], pages: [] };
+    const controller = new AbortController(); controller.abort();
+    await expect(translateDocument(model, new MockTranslator(), "French", { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+  });
 });

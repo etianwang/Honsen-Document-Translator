@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { normalizePdfError, parsePdf } from "./parse-pdf";
+import { normalizePdfError, normalizePdfPageError, parsePdf } from "./parse-pdf";
 
 describe("parsePdf", () => {
   it("extracts geometry, text, and source font metadata", async () => {
@@ -27,5 +27,9 @@ describe("parsePdf", () => {
   it("normalizes encrypted document errors without exposing parser internals", () => {
     const error = new Error("No password given"); error.name = "PasswordException";
     expect(normalizePdfError(error).message).toBe("ENCRYPTED_PDF: This PDF is password protected.");
+  });
+
+  it("records a page-specific recovery issue without parser internals", () => {
+    expect(normalizePdfPageError(new Error("internal details"), 3)).toEqual({ code: "PDF_PAGE_PARSE_FAILED", pageNumber: 3, message: "第 3 页无法完全解析，已跳过无法读取的内容。" });
   });
 });
