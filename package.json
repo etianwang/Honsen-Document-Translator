@@ -1,0 +1,45 @@
+{
+  "name": "pdf-translator-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "b": "pnpm build",
+    "typecheck": "tsc --noEmit && pnpm --dir packages/document-model typecheck && pnpm --dir packages/pdf-parser typecheck && pnpm --dir packages/layout-engine typecheck && pnpm --dir packages/docx-engine typecheck && pnpm --dir packages/translation-engine typecheck && pnpm --dir packages/document-pipeline typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-fs": "^2",
+    "@pdf-translator/document-model": "workspace:*",
+    "@pdf-translator/docx-engine": "workspace:*",
+    "@pdf-translator/layout-engine": "workspace:*",
+    "@pdf-translator/pdf-parser": "workspace:*",
+    "@pdf-translator/translation-engine": "workspace:*",
+    "@pdf-translator/document-pipeline": "workspace:*",
+    "docx": "^9.5.1",
+    "@tauri-apps/plugin-opener": "^2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/react": "^19.1.8",
+    "@types/node": "^24.10.0",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^6.0.2",
+    "typescript": "~6.0.3",
+    "eslint": "^9.39.2",
+    "typescript-eslint": "^8.53.0",
+    "vitest": "^4.0.18",
+    "vite": "^8.0.16",
+    "@tauri-apps/cli": "^2"
+  }
+}

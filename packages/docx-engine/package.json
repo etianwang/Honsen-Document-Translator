@@ -1,0 +1,13 @@
+{
+  "name": "@pdf-translator/docx-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@pdf-translator/document-model": "workspace:*",
+    "docx": "^9.5.1",
+    "jszip": "^3.10.2"
+  }
+}
