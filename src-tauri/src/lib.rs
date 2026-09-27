@@ -151,6 +151,10 @@ fn pdftoppm_path() -> PathBuf {
     bundled_resource("bin/poppler/pdftoppm.exe").unwrap_or_else(|| PathBuf::from("pdftoppm"))
 }
 
+fn libreoffice_path() -> PathBuf {
+    bundled_resource("libreoffice/program/soffice.exe").unwrap_or_else(|| PathBuf::from("soffice"))
+}
+
 fn bundled_resource(relative: &str) -> Option<PathBuf> {
     let current = std::env::current_dir().ok();
     let executable = std::env::current_exe().ok().and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
@@ -234,14 +238,18 @@ fn export_docx_to_pdf(docx_bytes: Vec<u8>, output_path: String) -> Result<(), St
     let temporary_docx = std::env::temp_dir().join(format!("pdf-translator-{nonce}.docx"));
     let temporary_pdf = temporary_docx.with_extension("pdf");
     fs::write(&temporary_docx, docx_bytes).map_err(|error| format!("DOCX_GENERATION_FAILED: {error}"))?;
-    let libreoffice_result = Command::new("soffice")
-        .args(["--headless", "--convert-to", "pdf", "--outdir", temporary_docx.parent().ok_or("PDF_EXPORT_FAILED: temporary directory missing")?.to_str().ok_or("PDF_EXPORT_FAILED: invalid temporary path")?, temporary_docx.to_str().ok_or("PDF_EXPORT_FAILED: invalid temporary path")?])
+    let temporary_dir = temporary_docx.parent().ok_or("PDF_EXPORT_FAILED: temporary directory missing")?;
+    let profile = temporary_dir.join(format!("honsen-libreoffice-{nonce}"));
+    let profile_arg = format!("-env:UserInstallation=file:///{}", profile.to_string_lossy().replace('\\', "/"));
+    let libreoffice_result = Command::new(libreoffice_path())
+        .args(["--headless", &profile_arg, "--convert-to", "pdf", "--outdir", temporary_dir.to_str().ok_or("PDF_EXPORT_FAILED: invalid temporary path")?, temporary_docx.to_str().ok_or("PDF_EXPORT_FAILED: invalid temporary path")?])
         .status();
     let converted = libreoffice_result.is_ok_and(|status| status.success() && temporary_pdf.exists());
     if !converted { export_with_word(&temporary_docx, &temporary_pdf)?; }
     fs::copy(&temporary_pdf, output_path).map_err(|error| format!("PDF_EXPORT_FAILED: {error}"))?;
     let _ = fs::remove_file(temporary_docx);
     let _ = fs::remove_file(temporary_pdf);
+    let _ = fs::remove_dir_all(profile);
     Ok(())
 }
 
@@ -304,10 +312,27 @@ mod tests {
     }
 
     #[test]
+    fn locates_a_libreoffice_executable() {
+        assert!(libreoffice_path().is_file());
+    }
+
+    #[test]
     #[ignore = "requires local Poppler and Tesseract installation"]
     fn runs_the_local_ocr_engine_for_an_image_pdf() {
         let source = std::env::current_dir().unwrap().join("../tests/fixtures/04-image.pdf").canonicalize().unwrap();
         let result = ocr_pdf_page(OcrPdfRequest { source_path: source.to_string_lossy().into_owned(), page_number: 1, page_width: 612.0, page_height: 792.0, language: Some("EN".into()) }).unwrap();
         assert_eq!(result.page_number, 1);
+    }
+
+    #[test]
+    #[ignore = "requires Microsoft Word or LibreOffice"]
+    fn exports_a_fixture_docx_to_pdf() {
+        let source = std::env::current_dir().unwrap().join("../output/docx/01-simple-paragraph.docx");
+        let output = std::env::temp_dir().join("honsen-export-check.pdf");
+        let _ = fs::remove_file(&output);
+        export_docx_to_pdf(fs::read(source).unwrap(), output.to_string_lossy().into_owned()).unwrap();
+        assert!(output.is_file());
+        assert!(fs::metadata(&output).unwrap().len() > 0);
+        let _ = fs::remove_file(output);
     }
 }

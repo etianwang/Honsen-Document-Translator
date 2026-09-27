@@ -20,12 +20,12 @@
 
 **Impact:** Parser, layout, translation, and DOCX packages are created only as their phases begin.
 
-## ADR-003: PDF exporter uses Word only when LibreOffice is unavailable
+## ADR-003: Portable PDF exporter bundles LibreOffice
 
-**Problem:** The configured environment has Microsoft Word but no `soffice.exe`.
+**Problem:** Customer machines must export PDF without Microsoft Office or a separate LibreOffice installation.
 
-**Current design:** The desktop command tries headless LibreOffice first. If it is unavailable or fails, it uses Word COM to create the PDF.
+**Current design:** The release build stages the installed LibreOffice runtime under `src-tauri/resources/libreoffice`, then Tauri bundles it beside the app. The exporter prefers that bundled `soffice.exe` and gives it a per-export temporary profile.
 
-**Reason:** The MVP must produce a PDF and report a meaningful failure rather than expose a non-functional export button.
+**Reason:** LibreOffice is the smallest established local DOCX-to-PDF engine available here that works on a customer machine without requiring Microsoft Office.
 
-**Impact:** LibreOffice remains the primary production path. The Word fallback is Windows-only and can be removed when a bundled LibreOffice runtime is supplied.
+**Impact:** The installer grows by about 681 MB and must include LibreOffice license/notice files (staged with the runtime). Word remains a development fallback only.

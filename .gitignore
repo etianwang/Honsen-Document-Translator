@@ -4,3 +4,4 @@ dist/
 tmp/
 output/
 src-tauri/target/
+src-tauri/resources/libreoffice/
