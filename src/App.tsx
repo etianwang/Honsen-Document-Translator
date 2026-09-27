@@ -7,11 +7,15 @@ import { buildDocx, validateDocx } from "@pdf-translator/docx-engine";
 import type { DocumentModel, ProcessingStage } from "@pdf-translator/document-model";
 import { translateDocument } from "@pdf-translator/translation-engine";
 import { DocumentPipeline } from "@pdf-translator/document-pipeline";
+import { configurePdfWorker } from "@pdf-translator/pdf-parser";
+import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
 import { TauriOcrProvider } from "./tauri-ocr-provider";
 import { applyGlossary, type GlossaryEntry, parseGlossaryYaml } from "./glossary";
 import { parseProject, serializeProject } from "./project-file";
 import "./App.css";
+
+configurePdfWorker(pdfWorkerUrl);
 
 interface DeepLKeyStatus { configured: boolean; source?: string; }
 const isBusy = (stage: ProcessingStage): boolean => !["idle", "completed", "failed"].includes(stage);

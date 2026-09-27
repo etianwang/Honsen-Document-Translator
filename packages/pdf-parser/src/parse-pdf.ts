@@ -1,6 +1,8 @@
-import { getDocument, OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { getDocument, GlobalWorkerOptions, OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PDFDocumentProxy, TextItem } from "pdfjs-dist/types/src/display/api";
 import type { DocumentIssue, ImageBlock, RawDocument, RawPage, RawTextItem } from "@pdf-translator/document-model";
+
+export function configurePdfWorker(workerSrc: string): void { GlobalWorkerOptions.workerSrc = workerSrc; }
 
 export async function parsePdf(data: Uint8Array, sourcePath: string): Promise<RawDocument> {
   if (!containsPdfHeader(data)) throw new Error("INVALID_PDF: The selected file does not contain a PDF header.");

@@ -24,6 +24,7 @@
 | [x] | 隐私数据流说明 | 明确本地 OCR、DeepL 文字传输、API Key 与项目文件的数据边界 | `docs/PRIVACY.md` 已建立并从 README 链接 |
 | [x] | YAML 术语精确覆盖 | YAML 中与完整原文段一致的术语会覆盖 DeepL 返回的译文，其他段落保持原译文 | 术语覆盖单元测试通过（2026-09-26） |
 | [x] | 手动源语言传递 | DeepL 支持的手动原文语言会随翻译请求发送；OCR-only 语言回退自动检测 | DeepL 适配器源语言传递测试通过（2026-09-26） |
+| [x] | PDF.js WebView Worker 打包 | PDF 解析 Worker 作为 Vite 资源随桌面端发布，避免正式 WebView 因 Worker 缺失而在导入阶段失败 | 前端构建产物包含 `pdf.worker-*.mjs`；26 项测试、类型检查与生产构建通过（2026-09-27） |
 | [x] | 便携 PDF 导出运行时接入 | 构建时从已安装的 LibreOffice 暂存完整运行时，正式包优先调用内置 `soffice.exe`，每次导出使用独立临时配置 | 运行时定位、真实 DOCX→PDF 测试通过；调试 MSI/NSIS 打包通过（2026-09-27） |
 
 ## 正式上线阻塞项
