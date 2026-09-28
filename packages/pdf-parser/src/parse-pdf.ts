@@ -53,18 +53,26 @@ export function normalizePdfPageError(_error: unknown, pageNumber: number, code 
 }
 
 async function extractImages(page: { getOperatorList(): Promise<{ fnArray: number[]; argsArray: (unknown[] | null)[] }>; objs: unknown }, pageNumber: number): Promise<ImageBlock[]> {
-  const operators = await page.getOperatorList();
+  const operators = await withTimeout(page.getOperatorList());
   const objects = page.objs as { get(id: string, callback: (value: unknown) => void): void };
   const images: ImageBlock[] = []; let transform = [1, 0, 0, 1, 0, 0];
   for (let index = 0; index < operators.fnArray.length; index += 1) {
     const args = operators.argsArray[index];
     if (operators.fnArray[index] === OPS.transform && args?.length === 6 && args.every((value) => typeof value === "number")) transform = args as number[];
     if (operators.fnArray[index] !== OPS.paintImageXObject || typeof args?.[0] !== "string") continue;
-    const image = await new Promise<PdfImage | undefined>((resolve) => objects.get(args[0] as string, (value) => resolve(isPdfImage(value) ? value : undefined)));
+    const image = await withTimeout(new Promise<PdfImage | undefined>((resolve) => objects.get(args[0] as string, (value) => resolve(isPdfImage(value) ? value : undefined))));
     if (!image || image.kind !== 2) continue;
     images.push({ id: `page-${pageNumber}-image-${images.length}`, type: "image", bbox: { x: transform[4], y: transform[5], width: Math.abs(transform[0]), height: Math.abs(transform[3]) }, source: `data:image/bmp;base64,${base64(bmp(image))}`, mimeType: "image/bmp", readingOrder: images.length });
   }
   return images;
+}
+
+// ponytail: skip a stalled PDF.js image after 10s; add a decoder queue only if real files need finer recovery.
+function withTimeout<T>(promise: Promise<T>, timeoutMs = 10_000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("PDF_IMAGE_EXTRACTION_TIMEOUT")), timeoutMs);
+    promise.then((value) => { clearTimeout(timer); resolve(value); }, (error: unknown) => { clearTimeout(timer); reject(error); });
+  });
 }
 
 interface PdfImage { width: number; height: number; kind: number; data: Uint8Array; }
