@@ -179,8 +179,7 @@ function App() {
 function EmptyPreview({ text }: { text: string }) { return <div className="empty-preview"><span>▧</span><p>{text}</p></div>; }
 
 function WindowControls() {
-  const window = getCurrentWindow();
-  return <div className="window-controls" aria-label="窗口控制"><button type="button" className="window-control minimize" aria-label="最小化窗口" onClick={() => void window.minimize()}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10" /></svg></button><button type="button" className="window-control close" aria-label="关闭窗口" onClick={() => void window.close()}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" /></svg></button></div>;
+  return <div className="window-controls" aria-label="窗口控制"><button type="button" className="window-control minimize" aria-label="最小化窗口" onClick={() => void getCurrentWindow().minimize()}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10" /></svg></button><button type="button" className="window-control close" aria-label="关闭窗口" onClick={() => void getCurrentWindow().close()}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" /></svg></button></div>;
 }
 
 function toDeepLSourceLanguage(language: string): string | undefined { return ({ ZH: "ZH", ZT: "ZH", EN: "EN", FR: "FR", ES: "ES", DE: "DE", PT: "PT", NL: "NL", TR: "TR", PL: "PL", NO: "NO", SV: "SV", FI: "FI", JA: "JA", KO: "KO", RU: "RU", UK: "UK", HU: "HU", AR: "AR" } as Record<string, string>)[language]; }
