@@ -9,6 +9,7 @@ describe("DocumentPipeline", () => {
     const result = await new DocumentPipeline().process(input, "fixture.pdf");
     expect(result.analysis.pageTypes).toEqual([{ pageNumber: 1, type: "text", confidence: 0.9 }]);
     expect(result.document.pages).toHaveLength(1);
+    expect(result.document.pages[0].blocks.flatMap((block) => block.type === "text" ? block.paragraphs : []).flatMap((paragraph) => paragraph.lines).flatMap((line) => line.runs).every((run) => run.translatedText === undefined)).toBe(true);
   });
 
   it("reports per-page analysis progress", async () => {

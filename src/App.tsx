@@ -13,13 +13,13 @@ import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
 import { TauriOcrProvider } from "./tauri-ocr-provider";
 import { applyGlossary, type GlossaryEntry, parseGlossaryYaml } from "./glossary";
+import { canExport, canTranslate, isWorkflowBusy, recoverAfterCancel, type WorkflowPhase } from "./workflow-state";
 import "./App.css";
 
 configurePdfWorker(pdfWorkerUrl);
 
 interface DeepLKeyStatus { configured: boolean; source?: string; }
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-const isBusy = (stage: ProcessingStage): boolean => !["idle", "completed", "failed"].includes(stage);
 const progressFor = (stage: ProcessingStage, completed: number, total: number): number => {
   const ratio = total ? completed / total : 0;
   if (stage === "analyzing") return Math.round(ratio * 35);
@@ -48,6 +48,8 @@ function App() {
   const [model, setModel] = useState<DocumentModel>();
   const [name, setName] = useState<string>();
   const [stage, setStage] = useState<ProcessingStage>("idle");
+  const [phase, setPhase] = useState<WorkflowPhase>("empty");
+  const isBusy = (stage: ProcessingStage): boolean => { void stage; return isWorkflowBusy(phase); };
   const [message, setMessage] = useState("No document loaded.");
   const [progress, setProgress] = useState(0);
   const [originalUrl, setOriginalUrl] = useState<string>();
@@ -71,7 +73,7 @@ function App() {
     const browserFile = isTauri ? undefined : await pickDomPdf();
     const path = isTauri ? await open({ multiple: false, filters: [{ name: "PDF", extensions: ["pdf"] }] }) : browserFile?.name;
     if (typeof path !== "string") return;
-    const controller = new AbortController(); activeAbortController.current = controller;
+    const controller = new AbortController(); activeAbortController.current = controller; setPhase("importing");
     try {
       setStage("analyzing"); setProgress(0); setMessage("正在分析 PDF：准备中");
       const bytes = browserFile ? new Uint8Array(await browserFile.arrayBuffer()) : await readFile(path);
@@ -82,41 +84,41 @@ function App() {
       if (!isTauri && originalUrl) URL.revokeObjectURL(originalUrl);
       setOriginalUrl(isTauri ? convertFileSrc(path) : URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })));
       setPageNumber(1); setZoom(1);
-      setName(path.split(/[\\/]/).pop()); setStage("completed"); setProgress(100);
+      setName(path.split(/[\\/]/).pop()); setStage("completed"); setPhase("review-source"); setProgress(100);
       setMessage(`已导入 ${pages.length} 页，请确认原文后点击开始翻译。`);
     } catch (error: unknown) {
-      if (error instanceof DOMException && error.name === "AbortError") { setStage("idle"); setMessage("已取消导入和 OCR。"); }
-      else { setStage("failed"); setMessage(error instanceof Error ? error.message : "PDF parsing failed."); }
+      if (error instanceof DOMException && error.name === "AbortError") { setStage("idle"); setPhase("empty"); setMessage("已取消导入和 OCR。"); }
+      else { setStage("failed"); setPhase("empty"); setMessage(error instanceof Error ? error.message : "PDF parsing failed."); }
     } finally { activeAbortController.current = undefined; }
   }
 
   async function exportDocx(): Promise<void> {
     if (!isTauri) { setMessage("DOM 调试仅支持 PDF 解析预览，请在桌面应用中导出。"); return; }
-    if (!model) return;
+    if (!model || !canExport(phase)) { setMessage("请先完成翻译并确认译文后再导出 DOCX。"); return; }
     const path = await save({ defaultPath: `${name?.replace(/\.pdf$/i, "") ?? "translated"}.docx`, filters: [{ name: "Word document", extensions: ["docx"] }] });
     if (!path) return;
     try {
-      setStage("generating-docx"); setMessage("Generating editable DOCX...");
+      setStage("generating-docx"); setPhase("exporting-docx"); setMessage("Generating editable DOCX...");
       await writeFile(path, await docxBytes());
-      setStage("completed"); setMessage("DOCX exported.");
+      setStage("completed"); setPhase("review-translation"); setMessage("DOCX exported.");
     } catch (error: unknown) {
-      setStage("failed"); setMessage(error instanceof Error ? error.message : "DOCX generation failed.");
+      setStage("failed"); setPhase("review-translation"); setMessage(error instanceof Error ? error.message : "DOCX generation failed.");
     }
   }
 
   async function translate(): Promise<void> {
     if (!isTauri) { setMessage("DOM 调试仅支持 PDF 解析预览，请在桌面应用中翻译。"); return; }
-    if (!model) return;
+    if (!model || !canTranslate(phase)) { setMessage("请先导入并确认原文后再开始翻译。"); return; }
     const controller = new AbortController(); activeAbortController.current = controller;
     try {
       if (apiKey.trim() && rememberKey) setKeyStatus(await invoke<DeepLKeyStatus>("save_deepl_api_key", { request: { apiKey, remember: true } }));
       if (!apiKey.trim() && !keyStatus.configured) throw new Error("请先填写 DeepL API Key。");
-      setStage("translating"); setMessage("Translating with DeepL...");
+      setStage("translating"); setPhase("translating"); setMessage("Translating with DeepL...");
       setModel(applyGlossary(await translateDocument(model, new TauriDeepLTranslator(apiKey.trim() || undefined, undefined, toDeepLSourceLanguage(sourceLanguage)), targetLanguage, { signal: controller.signal }), glossaryEntries));
-      setStage("completed"); setMessage("DeepL translation completed.");
+      setStage("completed"); setPhase("review-translation"); setMessage("DeepL translation completed.");
     } catch (error: unknown) {
-      if (error instanceof DOMException && error.name === "AbortError") { setStage("idle"); setMessage("已取消翻译。"); }
-      else { setStage("failed"); setMessage(error instanceof Error ? error.message : "Translation failed."); }
+      if (error instanceof DOMException && error.name === "AbortError") { setStage("idle"); setPhase(recoverAfterCancel("translating")); setMessage("已取消翻译。"); }
+      else { setStage("failed"); setPhase("review-source"); setMessage(error instanceof Error ? error.message : "Translation failed."); }
     } finally { activeAbortController.current = undefined; }
   }
 
@@ -139,15 +141,15 @@ function App() {
 
   async function exportPdf(): Promise<void> {
     if (!isTauri) { setMessage("DOM 调试仅支持 PDF 解析预览，请在桌面应用中导出。"); return; }
-    if (!model) return;
+    if (!model || !canExport(phase)) { setMessage("请先完成翻译并确认译文后再导出 PDF。"); return; }
     const path = await save({ defaultPath: `${name?.replace(/\.pdf$/i, "") ?? "translated"}.pdf`, filters: [{ name: "PDF", extensions: ["pdf"] }] });
     if (!path) return;
     try {
-      setStage("generating-pdf"); setMessage("Generating PDF...");
+      setStage("generating-pdf"); setPhase("exporting-pdf"); setMessage("Generating PDF...");
       await invoke("export_docx_to_pdf", { docxBytes: Array.from(await docxBytes()), outputPath: path });
-      setStage("completed"); setMessage("PDF exported.");
+      setStage("completed"); setPhase("review-translation"); setMessage("PDF exported.");
     } catch (error: unknown) {
-      setStage("failed"); setMessage(error instanceof Error ? error.message : "PDF export failed.");
+      setStage("failed"); setPhase("review-translation"); setMessage(error instanceof Error ? error.message : "PDF export failed.");
     }
   }
 
