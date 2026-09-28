@@ -197,17 +197,19 @@ function EmptyPreview({ text }: { text: string }) { return <div className="empty
 function TranslatedPagePreview({ sourceBytes, page, onLineChange }: { sourceBytes?: Uint8Array; page: DocumentPage; onLineChange: (lineId: string, translatedText: string) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [renderError, setRenderError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!sourceBytes) return;
     let cancelled = false;
     void (async () => {
       const canvas = canvasRef.current;
       if (!canvas || cancelled) return;
-      await renderPdfPage(sourceBytes.slice(), page.number, canvas);
-    })().catch(() => { if (!cancelled) setRenderError(true); });
+      await renderPdfPage(sourceBytes.slice(), page.number, canvas, () => cancelled);
+    })().catch((error: unknown) => { if (!cancelled) { console.error("PDF preview failed", error); setRenderError(true); } });
     return () => { cancelled = true; };
-  }, [page.number, sourceBytes]);
-  if (!sourceBytes || renderError) return <EmptyPreview text="无法渲染原页背景，请重新导入 PDF。" />;
+  }, [attempt, page.number, sourceBytes]);
+  if (!sourceBytes) return <EmptyPreview text="无法读取原始 PDF。" />;
+  if (renderError) return <div className="preview-retry"><EmptyPreview text="原页背景暂时无法渲染。" /><button className="button secondary" type="button" onClick={() => { setRenderError(false); setAttempt((value) => value + 1); }}>重试预览</button></div>;
   const lines = page.blocks.flatMap((block) => block.type === "text" ? block.paragraphs.flatMap((paragraph) => paragraph.lines) : []);
   return <div className="translated-page" style={{ aspectRatio: `${page.width} / ${page.height}` }} aria-label={`第 ${page.number} 页译文，保留原始图片与版式`}>
     <canvas ref={canvasRef} aria-hidden="true" />

@@ -4,9 +4,11 @@ import type { DocumentIssue, ImageBlock, RawDocument, RawPage, RawTextItem } fro
 
 export function configurePdfWorker(workerSrc: string): void { GlobalWorkerOptions.workerSrc = workerSrc; }
 
-export async function renderPdfPage(data: Uint8Array, pageNumber: number, canvas: HTMLCanvasElement): Promise<void> {
+export async function renderPdfPage(data: Uint8Array, pageNumber: number, canvas: HTMLCanvasElement, isCancelled?: () => boolean): Promise<void> {
   const pdf = await getDocument({ data }).promise;
+  if (isCancelled?.()) return;
   const page = await pdf.getPage(pageNumber);
+  if (isCancelled?.()) return;
   const viewport = page.getViewport({ scale: 2 });
   const context = canvas.getContext("2d");
   if (!context) throw new Error("PDF_PREVIEW_CONTEXT_FAILED");
