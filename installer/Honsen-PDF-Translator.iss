@@ -1,4 +1,4 @@
-#define AppName "Honsen PDF Translator"
+#define AppName "Honsen PDF 翻译器"
 #define AppVersion GetFileVersion("..\src-tauri\target\release\tauri-app.exe")
 #define AppExeName "HonsenPdfTranslator.exe"
 
@@ -7,8 +7,8 @@ AppId={{F0A4E014-4D3A-4AEE-B496-0A51895AA227}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=Honsen
-DefaultDirName={autopf}\Honsen PDF Translator
-DefaultGroupName=Honsen PDF Translator
+DefaultDirName={autopf}\Honsen PDF 翻译器
+DefaultGroupName=Honsen PDF 翻译器
 DisableProgramGroupPage=yes
 OutputDir=..\src-tauri\target\release\installer
 OutputBaseFilename=Honsen-PDF-Translator-Setup
@@ -17,6 +17,13 @@ UninstallDisplayIcon={app}\{#AppExeName}
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
+
+[Languages]
+Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+
+[CustomMessages]
+chinesesimp.CreateDesktopShortcut=创建桌面快捷方式
+chinesesimp.LaunchApplication=启动 Honsen PDF 翻译器
 
 [Files]
 Source: "..\src-tauri\target\release\tauri-app.exe"; DestDir: "{app}"; DestName: "{#AppExeName}"; Flags: ignoreversion
@@ -28,11 +35,11 @@ Type: files; Name: "{app}\tauri-app.exe"
 Type: files; Name: "{app}\Honsen PDF Translator.exe"
 
 [Icons]
-Name: "{group}\Honsen PDF Translator"; Filename: "{app}\{#AppExeName}"
-Name: "{autodesktop}\Honsen PDF Translator"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{group}\Honsen PDF 翻译器"; Filename: "{app}\{#AppExeName}"
+Name: "{autodesktop}\Honsen PDF 翻译器"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopShortcut}"; Flags: unchecked
 
 [Run]
-Filename: "{app}\{#AppExeName}"; Description: "Launch Honsen PDF Translator"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchApplication}"; Flags: nowait postinstall skipifsilent
