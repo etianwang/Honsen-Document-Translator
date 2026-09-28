@@ -18,6 +18,7 @@ import "./App.css";
 configurePdfWorker(pdfWorkerUrl);
 
 interface DeepLKeyStatus { configured: boolean; source?: string; }
+const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const isBusy = (stage: ProcessingStage): boolean => !["idle", "completed", "failed"].includes(stage);
 const progressFor = (stage: ProcessingStage, completed: number, total: number): number => {
   const ratio = total ? completed / total : 0;
@@ -35,6 +36,13 @@ const progressMessage = (stage: ProcessingStage, completed: number, total: numbe
   if (stage === "translating") return "正在通过 DeepL 翻译…";
   return `${stage} document…`;
 };
+async function pickDomPdf(): Promise<File | undefined> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file"; input.accept = "application/pdf";
+    input.onchange = () => resolve(input.files?.[0]); input.click();
+  });
+}
 
 function App() {
   const [model, setModel] = useState<DocumentModel>();
@@ -57,16 +65,17 @@ function App() {
   const [draftText, setDraftText] = useState("");
   const activeAbortController = useRef<AbortController | undefined>(undefined);
 
-  useEffect(() => { void invoke<DeepLKeyStatus>("deepl_key_status").then(setKeyStatus).catch(() => setKeyStatus({ configured: false })); }, []);
+  useEffect(() => { if (isTauri) void invoke<DeepLKeyStatus>("deepl_key_status").then(setKeyStatus).catch(() => setKeyStatus({ configured: false })); }, []);
 
   async function selectPdf(): Promise<void> {
-    const path = await open({ multiple: false, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    const browserFile = isTauri ? undefined : await pickDomPdf();
+    const path = isTauri ? await open({ multiple: false, filters: [{ name: "PDF", extensions: ["pdf"] }] }) : browserFile?.name;
     if (typeof path !== "string") return;
     const controller = new AbortController(); activeAbortController.current = controller;
     try {
       setStage("analyzing"); setProgress(0); setMessage("正在分析 PDF：准备中");
-      const bytes = await readFile(path);
-      const result = await new DocumentPipeline().process(bytes, path, { ocrEnabled, ocrProvider: ocrEnabled ? new TauriOcrProvider() : undefined, ocrLanguage: sourceLanguage === "AUTO" ? undefined : sourceLanguage, signal: controller.signal, onProgress: (pipelineStage, completed, total) => { setStage(pipelineStage); setProgress(progressFor(pipelineStage, completed, total)); setMessage(progressMessage(pipelineStage, completed, total)); } });
+      const bytes = browserFile ? new Uint8Array(await browserFile.arrayBuffer()) : await readFile(path);
+      const result = await new DocumentPipeline().process(bytes, path, { ocrEnabled: isTauri && ocrEnabled, ocrProvider: isTauri && ocrEnabled ? new TauriOcrProvider() : undefined, ocrLanguage: sourceLanguage === "AUTO" ? undefined : sourceLanguage, signal: controller.signal, onProgress: (pipelineStage, completed, total) => { setStage(pipelineStage); setProgress(progressFor(pipelineStage, completed, total)); setMessage(progressMessage(pipelineStage, completed, total)); } });
       const reconstructed = result.document;
       const pages = reconstructed.pages;
       setModel(reconstructed);
@@ -82,6 +91,7 @@ function App() {
   }
 
   async function exportDocx(): Promise<void> {
+    if (!isTauri) { setMessage("DOM 调试仅支持 PDF 解析预览，请在桌面应用中导出。"); return; }
     if (!model) return;
     const path = await save({ defaultPath: `${name?.replace(/\.pdf$/i, "") ?? "translated"}.docx`, filters: [{ name: "Word document", extensions: ["docx"] }] });
     if (!path) return;
@@ -95,6 +105,7 @@ function App() {
   }
 
   async function translate(): Promise<void> {
+    if (!isTauri) { setMessage("DOM 调试仅支持 PDF 解析预览，请在桌面应用中翻译。"); return; }
     if (!model) return;
     const controller = new AbortController(); activeAbortController.current = controller;
     try {
@@ -110,6 +121,7 @@ function App() {
   }
 
   async function chooseGlossary(): Promise<void> {
+    if (!isTauri) { setMessage("DOM 调试不支持读取本地术语表。"); return; }
     const path = await open({ multiple: false, filters: [{ name: "YAML glossary", extensions: ["yaml", "yml"] }] });
     if (typeof path !== "string") return;
     try {
@@ -119,12 +131,14 @@ function App() {
   }
 
   async function saveKey(): Promise<void> {
+    if (!isTauri) return;
     if (!apiKey.trim() || !rememberKey) return;
     try { setKeyStatus(await invoke<DeepLKeyStatus>("save_deepl_api_key", { request: { apiKey, remember: true } })); setMessage("DeepL API Key 已保存到安全存储。"); }
     catch (error: unknown) { setMessage(error instanceof Error ? error.message : "保存 API Key 失败。"); }
   }
 
   async function exportPdf(): Promise<void> {
+    if (!isTauri) { setMessage("DOM 调试仅支持 PDF 解析预览，请在桌面应用中导出。"); return; }
     if (!model) return;
     const path = await save({ defaultPath: `${name?.replace(/\.pdf$/i, "") ?? "translated"}.pdf`, filters: [{ name: "PDF", extensions: ["pdf"] }] });
     if (!path) return;
