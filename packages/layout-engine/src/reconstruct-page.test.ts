@@ -33,4 +33,23 @@ describe("reconstructPage", () => {
       expect(block.paragraphs[0]?.lines[0]?.runs.map((run) => run.id)).toEqual(["right", "left"]);
     }
   });
+
+  it("uses vector cell geometry to keep table columns as separate writable regions", () => {
+    const page: RawPage = {
+      number: 1, width: 200, height: 200, rotation: 0,
+      vectorPaths: [
+        { x: 10, y: 100, width: 50, height: 20 }, { x: 60, y: 100, width: 50, height: 20 }, { x: 110, y: 100, width: 50, height: 20 },
+        { x: 10, y: 80, width: 50, height: 20 }, { x: 60, y: 80, width: 50, height: 20 }, { x: 110, y: 80, width: 50, height: 20 },
+      ],
+      textItems: [
+        { id: "a", text: "A", bbox: { x: 20, y: 106, width: 8, height: 8 }, fontName: "Helvetica", fontSize: 8, rotation: 0 }, { id: "b", text: "B", bbox: { x: 70, y: 106, width: 8, height: 8 }, fontName: "Helvetica", fontSize: 8, rotation: 0 }, { id: "c", text: "C", bbox: { x: 120, y: 106, width: 8, height: 8 }, fontName: "Helvetica", fontSize: 8, rotation: 0 },
+        { id: "d", text: "D", bbox: { x: 20, y: 86, width: 8, height: 8 }, fontName: "Helvetica", fontSize: 8, rotation: 0 }, { id: "e", text: "E", bbox: { x: 70, y: 86, width: 8, height: 8 }, fontName: "Helvetica", fontSize: 8, rotation: 0 }, { id: "f", text: "F", bbox: { x: 120, y: 86, width: 8, height: 8 }, fontName: "Helvetica", fontSize: 8, rotation: 0 },
+      ],
+    };
+    const table = reconstructPage(page).blocks[0];
+    if (table?.type !== "table") throw new Error("Expected a vector table");
+    expect(table.rows).toHaveLength(2);
+    expect(table.rows[0]?.cells.map((cell) => cell.content[0]?.lines[0]?.runs[0]?.text)).toEqual(["A", "B", "C"]);
+    expect(table.rows[1]?.cells.map((cell) => cell.content[0]?.lines[0]?.runs[0]?.text)).toEqual(["D", "E", "F"]);
+  });
 });

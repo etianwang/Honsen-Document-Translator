@@ -11,6 +11,22 @@ describe("MockTranslator", () => {
     expect(block.paragraphs[0]?.lines[0]?.runs[0]?.translatedText).toBe("[TRANSLATED] Bonjour");
   });
 
+  it("keeps a source abbreviation when the provider returns an empty translation", async () => {
+    const model: DocumentModel = { version: 1, sourcePath: "fixture.pdf", sections: [], pages: [{ number: 1, width: 1, height: 1, rotation: 0, margins: { top: 0, right: 0, bottom: 0, left: 0 }, blocks: [{ id: "block", type: "text", bbox: { x: 0, y: 0, width: 1, height: 1 }, readingOrder: 0, paragraphs: [{ id: "paragraph", bbox: { x: 0, y: 0, width: 1, height: 1 }, alignment: "left", lines: [{ id: "line", bbox: { x: 0, y: 0, width: 1, height: 1 }, runs: [{ id: "run", bbox: { x: 0, y: 0, width: 1, height: 1 }, text: "QTE", style: {} }] }] }] }] }] };
+    const translated = await translateDocument(model, { translate: async () => ({ translations: [{ segmentId: "line", translatedText: "" }] }) }, "Chinese");
+    const block = translated.pages[0]?.blocks[0];
+    if (block?.type !== "text") throw new Error("Expected a text block");
+    expect(block.paragraphs[0]?.lines[0]?.runs[0]?.translatedText).toBe("QTE");
+  });
+
+  it("translates widely separated table columns as independent positioned runs", async () => {
+    const model: DocumentModel = { version: 1, sourcePath: "fixture.pdf", sections: [], pages: [{ number: 1, width: 20, height: 1, rotation: 0, margins: { top: 0, right: 0, bottom: 0, left: 0 }, blocks: [{ id: "block", type: "text", bbox: { x: 0, y: 0, width: 20, height: 1 }, readingOrder: 0, paragraphs: [{ id: "paragraph", bbox: { x: 0, y: 0, width: 20, height: 1 }, alignment: "left", lines: [{ id: "page-1-line-0", bbox: { x: 0, y: 0, width: 20, height: 1 }, runs: [{ id: "first", bbox: { x: 0, y: 0, width: 1, height: 1 }, text: "Bon", style: {} }, { id: "second", bbox: { x: 10, y: 0, width: 1, height: 1 }, text: "jour", style: {} }] }] }] }] }] };
+    const translated = await translateDocument(model, new MockTranslator(), "Chinese");
+    const block = translated.pages[0]?.blocks[0];
+    if (block?.type !== "text") throw new Error("Expected a text block");
+    expect(block.paragraphs[0]?.lines[0]?.runs.map((run) => run.translatedText)).toEqual(["[TRANSLATED] Bon", "[TRANSLATED] jour"]);
+  });
+
   it("does not start a translation after cancellation", async () => {
     const model: DocumentModel = { version: 1, sourcePath: "fixture.pdf", sections: [], pages: [] };
     const controller = new AbortController(); controller.abort();

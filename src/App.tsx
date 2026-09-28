@@ -8,17 +8,22 @@ import { buildDocx, validateDocx } from "@pdf-translator/docx-engine";
 import type { DocumentModel, DocumentPage, ParagraphModel, ProcessingStage } from "@pdf-translator/document-model";
 import { translateDocument } from "@pdf-translator/translation-engine";
 import { DocumentPipeline } from "@pdf-translator/document-pipeline";
-import { configurePdfWorker, renderPdfPages } from "@pdf-translator/pdf-parser";
+import { configurePdfWorker, renderCleanBackgroundPages } from "@pdf-translator/pdf-parser";
+import { exportTranslatedPdf, translatedCellRegions, translatedPlacements } from "./pdf-overlay-export";
 import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
 import { TauriOcrProvider } from "./tauri-ocr-provider";
 import { applyGlossary, type GlossaryEntry, parseGlossaryYaml } from "./glossary";
 import { canExport, canTranslate, isWorkflowBusy, recoverAfterCancel, restoreSourceReview, type WorkflowPhase } from "./workflow-state";
+import appLogo from "../logo.png";
+import sponsorWechat from "./assets/sponsor-wechat.jpg";
+import sponsorAlipay from "./assets/sponsor-alipay.jpg";
 import "./App.css";
 
 configurePdfWorker(pdfWorkerUrl);
 
 interface DeepLKeyStatus { configured: boolean; source?: string; }
+interface UpdateStatus { available: boolean; currentVersion: string; version?: string; releaseNotes?: string; }
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const progressMessage = (stage: ProcessingStage, completed: number, total: number): string => {
   const pageLabel = total ? `第 ${completed}/${total} 页` : "准备中";
@@ -46,6 +51,7 @@ function App() {
   const [progress, setProgress] = useState(0);
   const [originalUrl, setOriginalUrl] = useState<string>();
   const [sourceBytes, setSourceBytes] = useState<Uint8Array>();
+  const [ocrPages, setOcrPages] = useState<Set<number>>(new Set());
   const [pageNumber, setPageNumber] = useState(1);
   const [zoom, setZoom] = useState(1);
   const [targetLanguage, setTargetLanguage] = useState("ZH");
@@ -55,12 +61,33 @@ function App() {
   const [rememberKey, setRememberKey] = useState(true);
   const [showApiKey, setShowApiKey] = useState(false);
   const [keyStatus, setKeyStatus] = useState<DeepLKeyStatus>({ configured: false });
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>();
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [sponsorOpen, setSponsorOpen] = useState(false);
   const [glossaryName, setGlossaryName] = useState<string>();
   const [glossaryEntries, setGlossaryEntries] = useState<GlossaryEntry[]>([]);
   const activeAbortController = useRef<AbortController | undefined>(undefined);
 
-  useEffect(() => { if (isTauri) void invoke<DeepLKeyStatus>("deepl_key_status").then(setKeyStatus).catch(() => setKeyStatus({ configured: false })); }, []);
+  useEffect(() => { if (isTauri) { void invoke<DeepLKeyStatus>("deepl_key_status").then(setKeyStatus).catch(() => setKeyStatus({ configured: false })); void checkForUpdate(true); } }, []);
   useEffect(() => { setPhase((current) => restoreSourceReview(current, Boolean(model) && stage === "completed")); }, [model, stage]);
+
+  async function checkForUpdate(autoInstall = false): Promise<void> {
+    if (!isTauri) { setMessage("请在桌面应用中检查更新。"); return; }
+    setCheckingUpdate(true);
+    try {
+      const status = await invoke<UpdateStatus>("check_for_update");
+      setUpdateStatus(status); setMessage(status.available ? `发现 v${status.version} 更新。` : `当前已是最新版本 v${status.currentVersion}。`); if (autoInstall && status.available) await installUpdate(status);
+    } catch (error: unknown) { setMessage(error instanceof Error ? error.message : "检查更新失败，请稍后重试。"); }
+    finally { setCheckingUpdate(false); }
+  }
+
+  async function installUpdate(status = updateStatus): Promise<void> {
+    if (!status?.available) return;
+    setInstallingUpdate(true); setMessage(`正在下载 v${status.version} 并校验安装包…`);
+    try { await invoke("install_update"); }
+    catch (error: unknown) { setInstallingUpdate(false); setMessage(error instanceof Error ? error.message : "更新安装失败，请稍后重试。"); }
+  }
 
   async function selectPdf(): Promise<void> {
     const browserFile = isTauri ? undefined : await pickDomPdf();
@@ -75,6 +102,7 @@ function App() {
       const reconstructed = result.document;
       const pages = reconstructed.pages;
       setModel(reconstructed);
+      setOcrPages(new Set(result.analysis.pageTypes.filter((page) => page.type === "scanned").map((page) => page.pageNumber)));
       setSourceBytes(previewBytes);
       if (!isTauri && originalUrl) URL.revokeObjectURL(originalUrl);
       setOriginalUrl(isTauri ? convertFileSrc(path) : URL.createObjectURL(new Blob([previewBytes], { type: "application/pdf" })));
@@ -141,7 +169,8 @@ function App() {
     if (!path) return;
     try {
       setStage("generating-pdf"); setPhase("exporting-pdf"); setMessage("Generating PDF...");
-      await invoke("export_docx_to_pdf", { docxBytes: Array.from(await docxBytes()), outputPath: path });
+      if (!sourceBytes) throw new Error("PDF_EXPORT_FAILED: 原始 PDF 数据不可用，请重新导入文件。");
+      await writeFile(path, await exportTranslatedPdf(sourceBytes, model, ocrPages));
       setStage("completed"); setPhase("review-translation"); setMessage("PDF exported.");
     } catch (error: unknown) {
       setStage("failed"); setPhase("review-translation"); setMessage(error instanceof Error ? error.message : "PDF export failed.");
@@ -176,7 +205,7 @@ function App() {
   const totalPages = model?.pages.length ?? 0;
   const issues = model?.issues ?? [];
   return <main className="app-shell">
-    <header className="app-header" data-tauri-drag-region><div className="brand" data-tauri-drag-region><span className="pdf-mark" aria-hidden="true">PDF</span><h1>Honsen PDF Translator</h1></div><span className="brand-note" data-tauri-drag-region>让 AI 帮助你，打破语言的边界</span><WindowControls /></header>
+    <header className="app-header" data-tauri-drag-region><div className="brand" data-tauri-drag-region><img className="app-logo" src={appLogo} alt="" /><h1>Honsen PDF Translator</h1></div><span className="brand-note" data-tauri-drag-region>目前无AI加持，图片型PDF翻译成功率低。没有米子接入AI (ó﹏ò｡)</span><UpdateCenter status={updateStatus} checking={checkingUpdate} installing={installingUpdate} desktop={isTauri} onCheck={() => void checkForUpdate()} onInstall={() => void installUpdate()} onClose={() => setUpdateStatus(undefined)} /><SponsorAuthor open={sponsorOpen} onToggle={() => setSponsorOpen((open) => !open)} onClose={() => setSponsorOpen(false)} /><WindowControls /></header>
     <section className="toolbar-card" aria-label="翻译设置"><button className="button primary" type="button" onClick={selectPdf} disabled={isBusy(stage)}>＋ 导入 PDF</button><label>原文语言<select value={sourceLanguage} onChange={(event) => setSourceLanguage(event.currentTarget.value)} disabled={isBusy(stage)}><option value="AUTO">自动检测</option><option value="ZH">中文（简体）</option><option value="ZT">中文（繁体）</option><option value="EN">英语</option><option value="FR">法语</option><option value="ES">西班牙语</option><option value="DE">德语</option><option value="PT">葡萄牙语</option><option value="NL">荷兰语</option><option value="TR">土耳其语</option><option value="PL">波兰语</option><option value="NO">挪威语</option><option value="SV">瑞典语</option><option value="FI">芬兰语</option><option value="JA">日语</option><option value="KO">韩语</option><option value="RU">俄语</option><option value="UK">乌克兰语</option><option value="HU">匈牙利语</option><option value="KK">哈萨克语</option><option value="AR">阿拉伯语</option><option value="FA">波斯语</option></select></label><label>目标语言<select value={targetLanguage} onChange={(event) => setTargetLanguage(event.currentTarget.value)} disabled={isBusy(stage)}><option value="ZH">中文</option><option value="EN">英语</option><option value="FR">法语</option><option value="DE">德语</option><option value="JA">日语</option><option value="ES">西班牙语</option></select></label><label className="key-field">DeepL API Key<input type={showApiKey ? "text" : "password"} value={apiKey} onChange={(event) => setApiKey(event.currentTarget.value)} onBlur={() => void saveKey()} autoComplete="off" placeholder={keyStatus.configured ? "已配置" : "粘贴你的 API Key"} /><button className="icon-button" type="button" aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"} onClick={() => setShowApiKey((value) => !value)}>{showApiKey ? "◉" : "◌"}</button></label><div className="key-memory"><label className="check-field"><input type="checkbox" checked={rememberKey} onChange={(event) => { const remember = event.currentTarget.checked; setRememberKey(remember); if (!remember) void invoke("save_deepl_api_key", { request: { apiKey: "", remember: false } }).then(() => invoke<DeepLKeyStatus>("deepl_key_status")).then(setKeyStatus); }} />记住此密钥</label><span className={`key-state ${keyStatus.configured ? "ready" : ""}`}>{keyStatus.configured ? `● 已保存到安全存储${keyStatus.source ? `（${keyStatus.source}）` : ""}` : "○ 未保存"}</span></div><label className="switch-field"><input type="checkbox" checked={ocrEnabled} onChange={(event) => setOcrEnabled(event.currentTarget.checked)} /><span aria-hidden="true" />OCR 增强</label><label>页面范围<select disabled={isBusy(stage)}><option>全部页面</option></select></label><button className="button primary" type="button" onClick={translate} disabled={!model || isBusy(stage)}>▶ 开始翻译</button>{activeAbortController.current && <button className="button secondary" type="button" onClick={() => activeAbortController.current?.abort()}>取消当前任务</button>}</section>
     <section className="progress-card" aria-live="polite"><strong>翻译进度</strong><div className="progress-track" aria-label={`翻译进度 ${progress}%`}><span style={{ width: `${progress}%` }} /></div><span>{progress}%</span><span>{message}</span></section>
     {issues.length > 0 && <section className="issue-card" aria-label="文档问题" role="alert"><strong>文档问题（{issues.length}）</strong><ul>{issues.map((issue) => <li key={`${issue.code}-${issue.pageNumber ?? 0}`}>{issue.message}</li>)}</ul></section>}
@@ -188,7 +217,7 @@ function App() {
       <article className="document-card">
         <div className="card-title"><h2>▧ 译文（保留原页版式）</h2><ZoomControls zoom={zoom} onZoom={setZoom} /></div>
         <div className="translation-editor" style={{ zoom }}>
-          {phase === "review-translation" && model ? <TranslatedDocumentPreview sourceBytes={sourceBytes} pages={model.pages} onLineChange={commitLine} /> : <EmptyPreview text="确认原文后点击开始翻译；图片、签名和印章将保留在译文预览中。" />}
+          {phase === "review-translation" && model ? <TranslatedDocumentPreview sourceBytes={sourceBytes} pages={model.pages} maskedPages={ocrPages} onLineChange={commitLine} /> : <EmptyPreview text="确认原文后点击开始翻译；图片、签名和印章将保留在译文预览中。" />}
         </div>
       </article>
       <aside className="glossary-card">
@@ -205,40 +234,51 @@ function App() {
 
 function EmptyPreview({ text }: { text: string }) { return <div className="empty-preview"><span>▧</span><p>{text}</p></div>; }
 
-function updateLines(paragraphs: ParagraphModel[], lineId: string, translatedText: string): ParagraphModel[] {
-  return paragraphs.map((paragraph) => ({ ...paragraph, lines: paragraph.lines.map((line) => line.id !== lineId ? line : ({ ...line, runs: line.runs.map((run, index) => ({ ...run, translatedText: index ? "" : translatedText })) })) }));
+function UpdateCenter({ status, checking, installing, desktop, onCheck, onInstall, onClose }: { status?: UpdateStatus; checking: boolean; installing: boolean; desktop: boolean; onCheck: () => void; onInstall: () => void; onClose: () => void }) {
+  return <div className="update-center" data-tauri-drag-region="false"><button className="text-button" type="button" disabled={!desktop || checking || installing} onClick={onCheck}>{checking ? "正在检查…" : "检查更新"}</button>{status && <section className="update-result" aria-live="polite"><button className="update-result-close" type="button" aria-label="关闭更新提示" onClick={onClose}>×</button><strong>{status.available ? `发现 v${status.version}` : `当前 v${status.currentVersion}`}</strong>{status.available && <><p>{status.releaseNotes?.trim() || "此版本未提供更新说明。"}</p><button className="button primary" type="button" disabled={installing} onClick={onInstall}>{installing ? "正在安装…" : "下载并安装"}</button></>}</section>}</div>;
 }
 
-function TranslatedDocumentPreview({ sourceBytes, pages, onLineChange }: { sourceBytes?: Uint8Array; pages: DocumentPage[]; onLineChange: (lineId: string, translatedText: string) => void }) {
+function SponsorAuthor({ open, onToggle, onClose }: { open: boolean; onToggle: () => void; onClose: () => void }) {
+  return <div className="sponsor-center" data-tauri-drag-region="false"><button className="text-button" type="button" aria-expanded={open} onClick={onToggle}>赞助作者</button>{open && <section className="sponsor-result" aria-label="赞助作者"><button className="update-result-close" type="button" aria-label="关闭赞助二维码" onClick={onClose}>×</button><strong>感谢你的支持</strong><div className="sponsor-codes"><figure><img src={sponsorWechat} alt="微信赞助二维码" /><figcaption>微信</figcaption></figure><figure><img src={sponsorAlipay} alt="支付宝赞助二维码" /><figcaption>支付宝</figcaption></figure></div></section>}</div>;
+}
+
+function updateLines(paragraphs: ParagraphModel[], lineId: string, translatedText: string): ParagraphModel[] {
+  return paragraphs.map((paragraph) => ({ ...paragraph, lines: paragraph.lines.map((line) => line.id === lineId
+    ? ({ ...line, runs: line.runs.map((run, index) => ({ ...run, translatedText: index ? "" : translatedText })) })
+    : ({ ...line, runs: line.runs.map((run) => run.id === lineId ? { ...run, translatedText } : run) })) }));
+}
+
+function TranslatedDocumentPreview({ sourceBytes, pages, maskedPages, onLineChange }: { sourceBytes?: Uint8Array; pages: DocumentPage[]; maskedPages: Set<number>; onLineChange: (lineId: string, translatedText: string) => void }) {
   const canvases = useRef(new Map<number, HTMLCanvasElement>());
   const [renderError, setRenderError] = useState(false);
+  const [fallbackPages, setFallbackPages] = useState<Set<number>>(new Set());
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!sourceBytes) return;
     let cancelled = false;
+    setFallbackPages(new Set());
     const targets = pages.flatMap((page) => {
       const canvas = canvases.current.get(page.number);
       return canvas ? [{ pageNumber: page.number, canvas }] : [];
     });
-    void renderPdfPages(sourceBytes.slice(), targets, () => cancelled).catch((error: unknown) => { if (!cancelled) { console.error("PDF preview failed", error); setRenderError(true); } });
+    void renderCleanBackgroundPages(sourceBytes.slice(), targets, () => cancelled).then((fallback) => { if (!cancelled) setFallbackPages(new Set([...fallback, ...maskedPages])); }).catch((error: unknown) => { if (!cancelled) { console.error("PDF preview failed", error); setRenderError(true); } });
     return () => { cancelled = true; };
-  }, [attempt, pages, sourceBytes]);
+  }, [attempt, maskedPages, pages, sourceBytes]);
   if (!sourceBytes) return <EmptyPreview text="无法读取原始 PDF。" />;
   if (renderError) return <div className="preview-retry"><EmptyPreview text="原页背景暂时无法渲染。" /><button className="button secondary" type="button" onClick={() => { setRenderError(false); setAttempt((value) => value + 1); }}>重试预览</button></div>;
-  return <div className="translated-document" aria-label="连续译文预览">{pages.map((page) => <TranslatedPage key={page.number} page={page} canvasRef={(canvas) => { if (canvas) canvases.current.set(page.number, canvas); else canvases.current.delete(page.number); }} onLineChange={onLineChange} />)}</div>;
+  return <div className="translated-document" aria-label="连续译文预览">{pages.map((page) => <TranslatedPage key={page.number} page={page} useWhiteMask={fallbackPages.has(page.number)} canvasRef={(canvas) => { if (canvas) canvases.current.set(page.number, canvas); else canvases.current.delete(page.number); }} onLineChange={onLineChange} />)}</div>;
 }
 
-function TranslatedPage({ page, canvasRef, onLineChange }: { page: DocumentPage; canvasRef: (canvas: HTMLCanvasElement | null) => void; onLineChange: (lineId: string, translatedText: string) => void }) {
-  const lines = page.blocks.flatMap((block) => block.type === "text" ? block.paragraphs.flatMap((paragraph) => paragraph.lines) : block.type === "table" ? block.rows.flatMap((row) => row.cells).flatMap((cell) => cell.content).flatMap((paragraph) => paragraph.lines) : []);
+function TranslatedPage({ page, useWhiteMask, canvasRef, onLineChange }: { page: DocumentPage; useWhiteMask: boolean; canvasRef: (canvas: HTMLCanvasElement | null) => void; onLineChange: (lineId: string, translatedText: string) => void }) {
+  const placements = translatedPlacements(page);
+  const cellRegions = translatedCellRegions(page);
   return <div className="translated-page" style={{ aspectRatio: `${page.width} / ${page.height}` }} aria-label={`第 ${page.number} 页译文，保留原始图片与版式`}>
     <canvas ref={canvasRef} aria-hidden="true" />
-    {lines.map((line) => {
-      const original = line.runs.map((run) => run.text).join("");
-      const translated = line.runs.map((run) => run.translatedText ?? "").join("");
-      const scale = Math.sqrt(Math.min(1, original.length / Math.max(original.length, translated.length)));
-      const units = [...translated].reduce((total, character) => total + (character.charCodeAt(0) > 255 ? 1 : 0.55), 0.55);
-      const fontSize = Math.min(line.bbox.height / page.width * 100 * scale, Math.max(0.6, (line.bbox.width / page.width * 100 - 0.25) / units));
-      return <textarea key={line.id} className="translated-line" aria-label={`编辑第 ${page.number} 页译文`} dir={line.direction === "rtl" ? "rtl" : "ltr"} rows={1} wrap="off" defaultValue={translated} onBlur={(event) => onLineChange(line.id, event.currentTarget.value)} style={{ left: `${line.bbox.x / page.width * 100}%`, top: `${(page.height - line.bbox.y - line.bbox.height) / page.height * 100}%`, width: `${line.bbox.width / page.width * 100}%`, height: `${line.bbox.height / page.height * 100}%`, fontSize: `${fontSize}cqw` }} />;
+    {useWhiteMask && cellRegions.map((region, index) => <span key={`mask-${index}`} className="translated-cell-mask" aria-hidden="true" style={{ left: `${(region.x + 1) / page.width * 100}%`, top: `${(page.height - region.y - region.height + 1) / page.height * 100}%`, width: `${Math.max(0, region.width - 2) / page.width * 100}%`, height: `${Math.max(0, region.height - 2) / page.height * 100}%` }} />)}
+    {placements.map((placement) => {
+      const units = [...placement.text].reduce((total, character) => total + (character.charCodeAt(0) > 255 ? 1 : 0.55), 0.55);
+      const fontSize = Math.max(0.35, Math.min(placement.bbox.height / page.width * 100 * 0.8, (placement.bbox.width / page.width * 100 - 0.25) / units));
+      return <textarea key={placement.id} className={`translated-line${useWhiteMask ? "" : " clean-background"}`} aria-label={`编辑第 ${page.number} 页译文`} dir={placement.direction === "rtl" ? "rtl" : "ltr"} rows={1} wrap="off" defaultValue={placement.text} onBlur={(event) => onLineChange(placement.lineId, event.currentTarget.value)} style={{ left: `${placement.bbox.x / page.width * 100}%`, top: `${(page.height - placement.bbox.y - placement.bbox.height) / page.height * 100}%`, width: `${placement.bbox.width / page.width * 100}%`, height: `${placement.bbox.height / page.height * 100}%`, fontSize: `${fontSize}cqw` }} />;
     })}
   </div>;
 }

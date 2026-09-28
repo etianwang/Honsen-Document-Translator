@@ -2,7 +2,7 @@ export interface BoundingBox { x: number; y: number; width: number; height: numb
 export interface DocumentIssue { code: string; message: string; pageNumber?: number; }
 export type TextDirection = "ltr" | "rtl";
 export interface RawTextItem { id: string; text: string; bbox: BoundingBox; fontName: string; fontSize: number; rotation: number; direction?: TextDirection; }
-export interface RawPage { number: number; width: number; height: number; rotation: number; textItems: RawTextItem[]; images?: ImageBlock[]; }
+export interface RawPage { number: number; width: number; height: number; rotation: number; textItems: RawTextItem[]; images?: ImageBlock[]; vectorPaths?: BoundingBox[]; }
 export interface RawDocument { sourcePath: string; pages: RawPage[]; issues?: DocumentIssue[]; }
 
 export interface TextStyle { fontFamily?: string; originalFontName?: string; fontSize?: number; fontWeight?: number; bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean; color?: string; backgroundColor?: string; letterSpacing?: number; baselineShift?: number; rotation?: number; }

@@ -1,10 +1,14 @@
 use std::{fs, path::PathBuf, process::Command, time::{Duration, SystemTime, UNIX_EPOCH}};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 const DEEPL_FREE_ENDPOINT: &str = "https://api-free.deepl.com/v2/translate";
 const DEEPL_PRO_ENDPOINT: &str = "https://api.deepl.com/v2/translate";
 const KEYRING_SERVICE: &str = "Honsen PDF Translator";
 const KEYRING_ACCOUNT: &str = "deepl-api-key";
+const UPDATE_REPOSITORY: &str = "etianwang/Honsen-PDF-Translator";
+const UPDATE_INSTALLER: &str = "Honsen-PDF-Translator-Setup.exe";
+const UPDATE_CHECKSUMS: &str = "SHA256SUMS.json";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -71,6 +75,24 @@ struct OcrText {
 #[derive(Serialize)]
 struct OcrBox { x: f32, y: f32, width: f32, height: f32 }
 
+#[derive(Deserialize)]
+struct GithubRelease { tag_name: String, draft: bool, prerelease: bool, body: Option<String>, assets: Vec<GithubAsset> }
+
+#[derive(Deserialize)]
+struct GithubAsset { name: String, browser_download_url: String }
+
+#[derive(Deserialize)]
+struct ReleaseChecksums { assets: Vec<ReleaseChecksum> }
+
+#[derive(Deserialize)]
+struct ReleaseChecksum { name: String, sha256: String }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateStatus { available: bool, current_version: String, version: Option<String>, release_notes: Option<String> }
+
+struct AvailableUpdate { version: String, release_notes: String, installer_url: String, sha256: String }
+
 fn deepl_key(provided_key: Option<&str>) -> Result<String, String> {
     if let Some(key) = provided_key.filter(|key| !key.trim().is_empty()) { return Ok(key.trim().to_owned()); }
     if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT) {
@@ -83,6 +105,69 @@ fn deepl_key(provided_key: Option<&str>) -> Result<String, String> {
         .iter()
         .find_map(|name| std::env::var(name).ok().filter(|value| !value.trim().is_empty()))
         .ok_or_else(|| "DEEPL_NOT_CONFIGURED: Set DEEPL_API_KEY in the local .env file.".to_owned())
+}
+
+#[tauri::command]
+async fn check_for_update() -> Result<UpdateStatus, String> {
+    Ok(update_status(latest_update().await?))
+}
+
+fn update_status(update: Option<AvailableUpdate>) -> UpdateStatus {
+    UpdateStatus {
+        available: update.is_some(), current_version: env!("CARGO_PKG_VERSION").into(),
+        version: update.as_ref().map(|value| value.version.clone()),
+        release_notes: update.map(|value| value.release_notes),
+    }
+}
+
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    let update = latest_update().await?.ok_or("UPDATE_NOT_AVAILABLE: No newer verified release is available.")?;
+    let bytes = update_client()?.get(&update.installer_url).send().await
+        .map_err(|_| "UPDATE_DOWNLOAD_FAILED: Could not download the installer.")?
+        .error_for_status().map_err(|_| "UPDATE_DOWNLOAD_FAILED: The installer download failed.")?
+        .bytes().await.map_err(|_| "UPDATE_DOWNLOAD_FAILED: Could not read the installer.")?;
+    let actual = format!("{:x}", Sha256::digest(&bytes));
+    if !actual.eq_ignore_ascii_case(&update.sha256) { return Err("UPDATE_CHECKSUM_FAILED: Downloaded installer did not match the published SHA-256 checksum.".into()); }
+    let installer = std::env::temp_dir().join(format!("honsen-pdf-translator-{}-setup.exe", update.version));
+    fs::write(&installer, bytes).map_err(|error| format!("UPDATE_DOWNLOAD_FAILED: {error}"))?;
+    Command::new(&installer).args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/SP-"])
+        .spawn().map_err(|error| format!("UPDATE_INSTALL_FAILED: {error}"))?;
+    app.exit(0);
+    Ok(())
+}
+
+async fn latest_update() -> Result<Option<AvailableUpdate>, String> {
+    if cfg!(debug_assertions) { return Ok(None); }
+    let release = update_client()?.get(format!("https://api.github.com/repos/{UPDATE_REPOSITORY}/releases/latest")).send().await
+        .map_err(|_| "UPDATE_CHECK_FAILED: Could not contact GitHub Releases.")?
+        .error_for_status().map_err(|_| "UPDATE_CHECK_FAILED: GitHub Releases returned an error.")?
+        .json::<GithubRelease>().await.map_err(|_| "UPDATE_CHECK_FAILED: GitHub Releases returned invalid metadata.")?;
+    if release.draft || release.prerelease || !is_newer_version(&release.tag_name, env!("CARGO_PKG_VERSION")) { return Ok(None); }
+    let installer = release.assets.iter().find(|asset| asset.name == UPDATE_INSTALLER).ok_or("UPDATE_CHECK_FAILED: Release installer asset is missing.")?;
+    let checksums = release.assets.iter().find(|asset| asset.name == UPDATE_CHECKSUMS).ok_or("UPDATE_CHECK_FAILED: Release checksum asset is missing.")?;
+    let checksums = update_client()?.get(&checksums.browser_download_url).send().await
+        .map_err(|_| "UPDATE_CHECK_FAILED: Could not download release checksums.")?
+        .error_for_status().map_err(|_| "UPDATE_CHECK_FAILED: Release checksum download failed.")?
+        .json::<ReleaseChecksums>().await.map_err(|_| "UPDATE_CHECK_FAILED: Release checksums are invalid.")?;
+    let sha256 = checksums.assets.into_iter().find(|entry| entry.name == UPDATE_INSTALLER)
+        .map(|entry| entry.sha256).filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or("UPDATE_CHECK_FAILED: Installer SHA-256 is missing or invalid.")?;
+    Ok(Some(AvailableUpdate {
+        version: release.tag_name.trim_start_matches('v').to_owned(),
+        release_notes: release.body.unwrap_or_default().chars().take(12_000).collect(),
+        installer_url: installer.browser_download_url.clone(), sha256,
+    }))
+}
+
+fn update_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder().user_agent("Honsen-PDF-Translator-Updater").timeout(Duration::from_secs(30)).build()
+        .map_err(|_| "UPDATE_CHECK_FAILED: Could not initialize updater client.".into())
+}
+
+fn is_newer_version(candidate: &str, current: &str) -> bool {
+    let parse = |value: &str| value.trim_start_matches('v').split('.').map(|part| part.parse::<u32>().ok()).collect::<Option<Vec<_>>>();
+    match (parse(candidate), parse(current)) { (Some(candidate), Some(current)) => candidate > current, _ => false }
 }
 
 #[tauri::command]
@@ -266,7 +351,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page])
+        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -303,6 +388,21 @@ mod tests {
         assert_eq!(result.text[0].text, "Hello");
         assert_eq!(result.text[0].bbox.x, 60.0);
         assert_eq!(result.text[0].bbox.y, 780.0);
+    }
+
+    #[test]
+    fn compares_release_versions_without_accepting_invalid_tags() {
+        assert!(is_newer_version("v0.1.1", "0.1.0"));
+        assert!(!is_newer_version("0.1.0", "0.1.0"));
+        assert!(!is_newer_version("latest", "0.1.0"));
+    }
+
+    #[test]
+    fn exposes_verified_release_notes_without_auto_installing() {
+        let status = update_status(Some(AvailableUpdate { version: "0.1.1".into(), release_notes: "修复表格定位".into(), installer_url: "https://example.invalid/setup.exe".into(), sha256: "0".repeat(64) }));
+        assert!(status.available);
+        assert_eq!(status.version.as_deref(), Some("0.1.1"));
+        assert_eq!(status.release_notes.as_deref(), Some("修复表格定位"));
     }
 
     #[test]

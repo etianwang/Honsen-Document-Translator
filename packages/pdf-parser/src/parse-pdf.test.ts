@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { normalizePdfError, normalizePdfPageError, parsePdf } from "./parse-pdf";
+import { OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { cleanBackgroundOperationsFilter, normalizePdfError, normalizePdfPageError, parsePdf } from "./parse-pdf";
 
 describe("parsePdf", () => {
   it("extracts geometry, text, and source font metadata", async () => {
@@ -31,5 +32,11 @@ describe("parsePdf", () => {
 
   it("records a page-specific recovery issue without parser internals", () => {
     expect(normalizePdfPageError(new Error("internal details"), 3)).toEqual({ code: "PDF_PAGE_PARSE_FAILED", pageNumber: 3, message: "第 3 页无法完全解析，已跳过无法读取的内容。" });
+  });
+
+  it("skips ordinary glyph draws but preserves paths, images, state, and annotations", () => {
+    const filter = cleanBackgroundOperationsFilter({ fnArray: [OPS.save, OPS.constructPath, OPS.fill, OPS.showText, OPS.paintImageXObject, OPS.beginAnnotation, OPS.showText, OPS.endAnnotation, OPS.restore] });
+    expect([0, 1, 2, 4, 5, 6, 7, 8].every(filter)).toBe(true);
+    expect(filter(3)).toBe(false);
   });
 });

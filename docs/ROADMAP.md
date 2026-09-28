@@ -13,6 +13,7 @@
 - [x] Semantic DOCX generation and desktop PDF export (LibreOffice first, Word fallback)
 - [x] Fixture-backed PDF -> DOCX integration test and render QA
 - [x] Rule-based tables, repeated headers/footers, page numbers, and simple embedded RGB images
+- [x] Vector-path extraction and vector-cell table reconstruction for bordered tables
 
 ## Phase 2 — Translation
 
@@ -25,4 +26,7 @@
 
 ## Phase 4 — Advanced layout
 
-- [ ] Columns, complex tables, floating objects, shapes, notes, and lists
+- [ ] Shared writable-region layout result for preview and PDF export
+- [ ] Vector-grid snapping, merged-cell inference, and cell-aware text fitting
+- [ ] Collision validation against image, stamp, and figure obstacles
+- [ ] Columns, unbordered tables, floating objects, shapes, notes, and lists

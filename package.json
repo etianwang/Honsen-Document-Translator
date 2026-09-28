@@ -1,7 +1,7 @@
 {
   "name": "pdf-translator-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,35 +15,38 @@
     "check:release-secrets": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/check-release-secrets.ps1",
     "write:release-checksums": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/write-release-checksums.ps1",
     "stage:libreoffice": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/stage-libreoffice.ps1",
+    "build:inno": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-inno-installer.ps1",
+    "release:inno": "pnpm tauri build && pnpm build:inno && pnpm write:release-checksums",
     "tauri:portable": "pnpm stage:libreoffice && pnpm tauri build",
     "tauri": "tauri"
   },
   "dependencies": {
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-dialog": "^2",
-    "@tauri-apps/plugin-fs": "^2",
     "@pdf-translator/document-model": "workspace:*",
+    "@pdf-translator/document-pipeline": "workspace:*",
     "@pdf-translator/docx-engine": "workspace:*",
     "@pdf-translator/layout-engine": "workspace:*",
     "@pdf-translator/pdf-parser": "workspace:*",
     "@pdf-translator/translation-engine": "workspace:*",
-    "@pdf-translator/document-pipeline": "workspace:*",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-fs": "^2",
+    "@tauri-apps/plugin-opener": "^2",
     "docx": "^9.5.1",
-    "@tauri-apps/plugin-opener": "^2"
+    "pdf-lib": "^1.17.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
-    "@types/react": "^19.1.8",
+    "@tauri-apps/cli": "^2",
     "@types/node": "^24.10.0",
+    "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^6.0.2",
-    "typescript": "~6.0.3",
     "eslint": "^9.39.2",
+    "typescript": "~6.0.3",
     "typescript-eslint": "^8.53.0",
-    "vitest": "^4.0.18",
     "vite": "^8.0.16",
-    "@tauri-apps/cli": "^2"
+    "vitest": "^4.0.18"
   }
 }

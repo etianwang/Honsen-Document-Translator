@@ -1,25 +1,53 @@
 import { getDocument, GlobalWorkerOptions, OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PDFDocumentProxy, TextItem } from "pdfjs-dist/types/src/display/api";
-import type { DocumentIssue, ImageBlock, RawDocument, RawPage, RawTextItem } from "@pdf-translator/document-model";
+import type { BoundingBox, DocumentIssue, ImageBlock, RawDocument, RawPage, RawTextItem } from "@pdf-translator/document-model";
 
 export function configurePdfWorker(workerSrc: string): void { GlobalWorkerOptions.workerSrc = workerSrc; }
 
-export async function renderPdfPage(data: Uint8Array, pageNumber: number, canvas: HTMLCanvasElement, isCancelled?: () => boolean): Promise<void> {
-  await renderPdfPages(data, [{ pageNumber, canvas }], isCancelled);
+export async function renderPdfPage(data: Uint8Array, pageNumber: number, canvas: HTMLCanvasElement, isCancelled?: () => boolean, scale = 2): Promise<void> {
+  await renderPdfPages(data, [{ pageNumber, canvas }], isCancelled, scale);
 }
 
-export async function renderPdfPages(data: Uint8Array, targets: Array<{ pageNumber: number; canvas: HTMLCanvasElement }>, isCancelled?: () => boolean): Promise<void> {
+export async function renderPdfPages(data: Uint8Array, targets: Array<{ pageNumber: number; canvas: HTMLCanvasElement }>, isCancelled?: () => boolean, scale = 2): Promise<void> {
   const pdf = await getDocument({ data }).promise;
   for (const target of targets) {
     if (isCancelled?.()) return;
     const page = await pdf.getPage(target.pageNumber);
     if (isCancelled?.()) return;
-    const viewport = page.getViewport({ scale: 2 });
+    const viewport = page.getViewport({ scale });
     const context = target.canvas.getContext("2d");
     if (!context) throw new Error("PDF_PREVIEW_CONTEXT_FAILED");
     target.canvas.width = viewport.width; target.canvas.height = viewport.height;
     await page.render({ canvas: target.canvas, canvasContext: context, viewport }).promise;
   }
+}
+
+/** Renders the page without ordinary page-content glyphs. Returns pages that used the normal-render fallback. */
+export async function renderCleanBackgroundPages(data: Uint8Array, targets: Array<{ pageNumber: number; canvas: HTMLCanvasElement }>, isCancelled?: () => boolean, scale = 2): Promise<number[]> {
+  const pdf = await getDocument({ data }).promise;
+  const fallbackPages: number[] = [];
+  for (const target of targets) {
+    if (isCancelled?.()) return fallbackPages;
+    const page = await pdf.getPage(target.pageNumber);
+    if (isCancelled?.()) return fallbackPages;
+    const viewport = page.getViewport({ scale });
+    const context = target.canvas.getContext("2d");
+    if (!context) throw new Error("PDF_PREVIEW_CONTEXT_FAILED");
+    target.canvas.width = viewport.width; target.canvas.height = viewport.height;
+    try {
+      const operators = await page.getOperatorList();
+      await page.render({ canvas: target.canvas, canvasContext: context, viewport, operationsFilter: cleanBackgroundOperationsFilter(operators) }).promise;
+    } catch {
+      target.canvas.width = viewport.width; target.canvas.height = viewport.height;
+      await page.render({ canvas: target.canvas, canvasContext: context, viewport }).promise;
+      fallbackPages.push(target.pageNumber);
+    }
+  }
+  return fallbackPages;
+}
+
+export async function renderCleanBackgroundPage(data: Uint8Array, pageNumber: number, canvas: HTMLCanvasElement, isCancelled?: () => boolean, scale = 2): Promise<boolean> {
+  return (await renderCleanBackgroundPages(data, [{ pageNumber, canvas }], isCancelled, scale)).includes(pageNumber);
 }
 
 export async function parsePdf(data: Uint8Array, sourcePath: string, onProgress?: (completed: number, total: number) => void): Promise<RawDocument> {
@@ -43,10 +71,13 @@ export async function parsePdf(data: Uint8Array, sourcePath: string, onProgress?
     const textItems = content.items.flatMap((item, index) =>
       "str" in item && item.str.trim() ? [toRawTextItem(item, index, pageNumber)] : [],
     );
-    let images: ImageBlock[] = [];
-    try { images = await extractImages(page, pageNumber); }
-    catch (error: unknown) { issues.push(normalizePdfPageError(error, pageNumber, "PDF_IMAGE_EXTRACTION_FAILED")); }
-    pages.push({ number: pageNumber, width: viewport.width, height: viewport.height, rotation: page.rotate, textItems, images }); onProgress?.(pageNumber, pdf.numPages);
+    let images: ImageBlock[] = []; let vectorPaths: BoundingBox[] = [];
+    try {
+      const operators = await page.getOperatorList();
+      images = extractImages(operators, page.objs, pageNumber);
+      vectorPaths = extractVectorPaths(operators);
+    } catch (error: unknown) { issues.push(normalizePdfPageError(error, pageNumber, "PDF_GEOMETRY_EXTRACTION_FAILED")); }
+    pages.push({ number: pageNumber, width: viewport.width, height: viewport.height, rotation: page.rotate, textItems, images, vectorPaths }); onProgress?.(pageNumber, pdf.numPages);
   }
   return { sourcePath, pages, issues };
 }
@@ -70,9 +101,24 @@ export function normalizePdfPageError(_error: unknown, pageNumber: number, code 
   return { code, pageNumber, message: `第 ${pageNumber} 页无法完全解析，已跳过无法读取的内容。` };
 }
 
-async function extractImages(page: { getOperatorList(): Promise<{ fnArray: number[]; argsArray: (unknown[] | null)[] }>; objs: unknown }, pageNumber: number): Promise<ImageBlock[]> {
-  const operators = await page.getOperatorList();
-  const objects = page.objs as { has(id: string): boolean; get(id: string): unknown };
+interface OperatorList { fnArray: number[]; argsArray: (unknown[] | null)[]; }
+
+export function cleanBackgroundOperationsFilter(operators: Pick<OperatorList, "fnArray">): (index: number) => boolean {
+  const skipped = new Set<number>(); let annotationDepth = 0;
+  for (const [index, operator] of operators.fnArray.entries()) {
+    if (operator === OPS.beginAnnotation) { annotationDepth += 1; continue; }
+    if (operator === OPS.endAnnotation) { annotationDepth = Math.max(0, annotationDepth - 1); continue; }
+    if (annotationDepth === 0 && isGlyphDrawingOperator(operator)) skipped.add(index);
+  }
+  return (index) => !skipped.has(index);
+}
+
+function isGlyphDrawingOperator(operator: number): boolean {
+  return operator === OPS.showText || operator === OPS.showSpacedText || operator === OPS.nextLineShowText || operator === OPS.nextLineSetSpacingShowText;
+}
+
+function extractImages(operators: OperatorList, rawObjects: unknown, pageNumber: number): ImageBlock[] {
+  const objects = rawObjects as { has(id: string): boolean; get(id: string): unknown };
   const images: ImageBlock[] = []; let transform = [1, 0, 0, 1, 0, 0];
   for (let index = 0; index < operators.fnArray.length; index += 1) {
     const args = operators.argsArray[index];
@@ -84,6 +130,14 @@ async function extractImages(page: { getOperatorList(): Promise<{ fnArray: numbe
     images.push({ id: `page-${pageNumber}-image-${images.length}`, type: "image", bbox: { x: transform[4], y: transform[5], width: Math.abs(transform[0]), height: Math.abs(transform[3]) }, source: `data:image/bmp;base64,${base64(bmp(image))}`, mimeType: "image/bmp", readingOrder: images.length });
   }
   return images;
+}
+
+function extractVectorPaths(operators: OperatorList): Array<{ x: number; y: number; width: number; height: number }> {
+  return operators.argsArray.flatMap((args, index) => {
+    if (operators.fnArray[index] !== OPS.constructPath || !args?.[2] || !ArrayBuffer.isView(args[2])) return [];
+    const [left, bottom, right, top] = Array.from(args[2] as unknown as ArrayLike<number>);
+    return [left, bottom, right, top].every(Number.isFinite) && right > left && top > bottom ? [{ x: left, y: bottom, width: right - left, height: top - bottom }] : [];
+  });
 }
 
 interface PdfImage { width: number; height: number; kind: number; data: Uint8Array; }
