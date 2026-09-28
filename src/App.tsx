@@ -8,9 +8,8 @@ import { buildDocx, validateDocx } from "@pdf-translator/docx-engine";
 import type { DocumentModel, DocumentPage, ProcessingStage } from "@pdf-translator/document-model";
 import { translateDocument } from "@pdf-translator/translation-engine";
 import { DocumentPipeline } from "@pdf-translator/document-pipeline";
-import { configurePdfWorker } from "@pdf-translator/pdf-parser";
+import { configurePdfWorker, renderPdfPage } from "@pdf-translator/pdf-parser";
 import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs?url";
-import { getDocument, GlobalWorkerOptions } from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.mjs";
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
 import { TauriOcrProvider } from "./tauri-ocr-provider";
 import { applyGlossary, type GlossaryEntry, parseGlossaryYaml } from "./glossary";
@@ -18,7 +17,6 @@ import { canExport, canTranslate, isWorkflowBusy, recoverAfterCancel, restoreSou
 import "./App.css";
 
 configurePdfWorker(pdfWorkerUrl);
-GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 interface DeepLKeyStatus { configured: boolean; source?: string; }
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -202,17 +200,12 @@ function TranslatedPagePreview({ sourceBytes, page, onLineChange }: { sourceByte
   useEffect(() => {
     if (!sourceBytes) return;
     let cancelled = false;
-    const loadingTask = getDocument({ data: sourceBytes.slice() });
-    void loadingTask.promise.then(async (pdf) => {
-      const pdfPage = await pdf.getPage(page.number);
-      const viewport = pdfPage.getViewport({ scale: 2 });
+    void (async () => {
       const canvas = canvasRef.current;
-      const context = canvas?.getContext("2d");
-      if (!canvas || !context || cancelled) return;
-      canvas.width = viewport.width; canvas.height = viewport.height;
-      await pdfPage.render({ canvas, canvasContext: context, viewport }).promise;
-    }).catch(() => { if (!cancelled) setRenderError(true); });
-    return () => { cancelled = true; void loadingTask.destroy(); };
+      if (!canvas || cancelled) return;
+      await renderPdfPage(sourceBytes.slice(), page.number, canvas);
+    })().catch(() => { if (!cancelled) setRenderError(true); });
+    return () => { cancelled = true; };
   }, [page.number, sourceBytes]);
   if (!sourceBytes || renderError) return <EmptyPreview text="无法渲染原页背景，请重新导入 PDF。" />;
   const lines = page.blocks.flatMap((block) => block.type === "text" ? block.paragraphs.flatMap((paragraph) => paragraph.lines) : []);

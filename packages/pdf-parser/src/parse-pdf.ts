@@ -4,6 +4,16 @@ import type { DocumentIssue, ImageBlock, RawDocument, RawPage, RawTextItem } fro
 
 export function configurePdfWorker(workerSrc: string): void { GlobalWorkerOptions.workerSrc = workerSrc; }
 
+export async function renderPdfPage(data: Uint8Array, pageNumber: number, canvas: HTMLCanvasElement): Promise<void> {
+  const pdf = await getDocument({ data }).promise;
+  const page = await pdf.getPage(pageNumber);
+  const viewport = page.getViewport({ scale: 2 });
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("PDF_PREVIEW_CONTEXT_FAILED");
+  canvas.width = viewport.width; canvas.height = viewport.height;
+  await page.render({ canvas, canvasContext: context, viewport }).promise;
+}
+
 export async function parsePdf(data: Uint8Array, sourcePath: string, onProgress?: (completed: number, total: number) => void): Promise<RawDocument> {
   if (!containsPdfHeader(data)) throw new Error("INVALID_PDF: The selected file does not contain a PDF header.");
   let pdf: PDFDocumentProxy;
