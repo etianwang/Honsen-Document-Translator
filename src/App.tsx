@@ -8,7 +8,7 @@ import { buildDocx, validateDocx } from "@pdf-translator/docx-engine";
 import type { DocumentModel, DocumentPage, ParagraphModel, ProcessingStage } from "@pdf-translator/document-model";
 import { translateDocument } from "@pdf-translator/translation-engine";
 import { DocumentPipeline } from "@pdf-translator/document-pipeline";
-import { configurePdfWorker, renderPdfPage } from "@pdf-translator/pdf-parser";
+import { configurePdfWorker, renderPdfPages } from "@pdf-translator/pdf-parser";
 import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
 import { TauriOcrProvider } from "./tauri-ocr-provider";
@@ -155,8 +155,6 @@ function App() {
     return bytes;
   }
 
-  const currentPage = model?.pages[pageNumber - 1];
-  const isRtlPage = currentPage?.blocks.some((block) => block.type === "text" && block.paragraphs.some((paragraph) => paragraph.direction === "rtl")) ?? false;
   function commitLine(lineId: string, translatedText: string): void {
     setModel((current) => {
       if (!current) return current;
@@ -188,9 +186,9 @@ function App() {
         {originalUrl ? <object className="pdf-viewer" data={`${originalUrl}#page=${pageNumber}`} type="application/pdf" aria-label={`原始 PDF 第 ${pageNumber} 页`} style={{ zoom }} /> : <EmptyPreview text="导入 PDF 后在这里查看原文" />}
       </article>
       <article className="document-card">
-        <div className="card-title"><h2>▧ 译文（保留原页版式）</h2><PageControls page={pageNumber} total={totalPages} zoom={zoom} onPage={setPageNumber} onZoom={setZoom} /></div>
-        <div className={`translation-editor${isRtlPage ? " rtl" : ""}`} style={{ zoom }}>
-          {phase === "review-translation" && currentPage ? <TranslatedPagePreview sourceBytes={sourceBytes} page={currentPage} onLineChange={commitLine} /> : <EmptyPreview text="确认原文后点击开始翻译；图片、签名和印章将保留在译文预览中。" />}
+        <div className="card-title"><h2>▧ 译文（保留原页版式）</h2><ZoomControls zoom={zoom} onZoom={setZoom} /></div>
+        <div className="translation-editor" style={{ zoom }}>
+          {phase === "review-translation" && model ? <TranslatedDocumentPreview sourceBytes={sourceBytes} pages={model.pages} onLineChange={commitLine} /> : <EmptyPreview text="确认原文后点击开始翻译；图片、签名和印章将保留在译文预览中。" />}
         </div>
       </article>
       <aside className="glossary-card">
@@ -211,22 +209,26 @@ function updateLines(paragraphs: ParagraphModel[], lineId: string, translatedTex
   return paragraphs.map((paragraph) => ({ ...paragraph, lines: paragraph.lines.map((line) => line.id !== lineId ? line : ({ ...line, runs: line.runs.map((run, index) => ({ ...run, translatedText: index ? "" : translatedText })) })) }));
 }
 
-function TranslatedPagePreview({ sourceBytes, page, onLineChange }: { sourceBytes?: Uint8Array; page: DocumentPage; onLineChange: (lineId: string, translatedText: string) => void }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+function TranslatedDocumentPreview({ sourceBytes, pages, onLineChange }: { sourceBytes?: Uint8Array; pages: DocumentPage[]; onLineChange: (lineId: string, translatedText: string) => void }) {
+  const canvases = useRef(new Map<number, HTMLCanvasElement>());
   const [renderError, setRenderError] = useState(false);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!sourceBytes) return;
     let cancelled = false;
-    void (async () => {
-      const canvas = canvasRef.current;
-      if (!canvas || cancelled) return;
-      await renderPdfPage(sourceBytes.slice(), page.number, canvas, () => cancelled);
-    })().catch((error: unknown) => { if (!cancelled) { console.error("PDF preview failed", error); setRenderError(true); } });
+    const targets = pages.flatMap((page) => {
+      const canvas = canvases.current.get(page.number);
+      return canvas ? [{ pageNumber: page.number, canvas }] : [];
+    });
+    void renderPdfPages(sourceBytes.slice(), targets, () => cancelled).catch((error: unknown) => { if (!cancelled) { console.error("PDF preview failed", error); setRenderError(true); } });
     return () => { cancelled = true; };
-  }, [attempt, page.number, sourceBytes]);
+  }, [attempt, pages, sourceBytes]);
   if (!sourceBytes) return <EmptyPreview text="无法读取原始 PDF。" />;
   if (renderError) return <div className="preview-retry"><EmptyPreview text="原页背景暂时无法渲染。" /><button className="button secondary" type="button" onClick={() => { setRenderError(false); setAttempt((value) => value + 1); }}>重试预览</button></div>;
+  return <div className="translated-document" aria-label="连续译文预览">{pages.map((page) => <TranslatedPage key={page.number} page={page} canvasRef={(canvas) => { if (canvas) canvases.current.set(page.number, canvas); else canvases.current.delete(page.number); }} onLineChange={onLineChange} />)}</div>;
+}
+
+function TranslatedPage({ page, canvasRef, onLineChange }: { page: DocumentPage; canvasRef: (canvas: HTMLCanvasElement | null) => void; onLineChange: (lineId: string, translatedText: string) => void }) {
   const lines = page.blocks.flatMap((block) => block.type === "text" ? block.paragraphs.flatMap((paragraph) => paragraph.lines) : block.type === "table" ? block.rows.flatMap((row) => row.cells).flatMap((cell) => cell.content).flatMap((paragraph) => paragraph.lines) : []);
   return <div className="translated-page" style={{ aspectRatio: `${page.width} / ${page.height}` }} aria-label={`第 ${page.number} 页译文，保留原始图片与版式`}>
     <canvas ref={canvasRef} aria-hidden="true" />
@@ -246,6 +248,8 @@ function WindowControls() {
 }
 
 function toDeepLSourceLanguage(language: string): string | undefined { return ({ ZH: "ZH", ZT: "ZH", EN: "EN", FR: "FR", ES: "ES", DE: "DE", PT: "PT", NL: "NL", TR: "TR", PL: "PL", NO: "NO", SV: "SV", FI: "FI", JA: "JA", KO: "KO", RU: "RU", UK: "UK", HU: "HU", AR: "AR" } as Record<string, string>)[language]; }
+
+function ZoomControls({ zoom, onZoom }: { zoom: number; onZoom: (value: (previous: number) => number) => void }) { return <div className="page-controls"><button type="button" aria-label="缩小" onClick={() => onZoom((value) => Math.max(0.75, value - 0.25))}>−</button><span>{Math.round(zoom * 100)}%</span><button type="button" aria-label="放大" onClick={() => onZoom((value) => Math.min(2, value + 0.25))}>＋</button></div>; }
 
 function PageControls({ page, total, zoom, onPage, onZoom }: { page: number; total: number; zoom: number; onPage: (value: number | ((previous: number) => number)) => void; onZoom: (value: (previous: number) => number) => void }) { return <div className="page-controls"><button type="button" aria-label="上一页" onClick={() => onPage((value) => Math.max(1, value - 1))} disabled={page <= 1}>‹</button><span>{total ? `${page} / ${total}` : "— / —"}</span><button type="button" aria-label="下一页" onClick={() => onPage((value) => Math.min(total, value + 1))} disabled={!total || page >= total}>›</button><button type="button" aria-label="缩小" onClick={() => onZoom((value) => Math.max(0.75, value - 0.25))}>−</button><span>{Math.round(zoom * 100)}%</span><button type="button" aria-label="放大" onClick={() => onZoom((value) => Math.min(2, value + 0.25))}>＋</button></div>; }
 

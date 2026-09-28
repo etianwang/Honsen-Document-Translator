@@ -5,15 +5,21 @@ import type { DocumentIssue, ImageBlock, RawDocument, RawPage, RawTextItem } fro
 export function configurePdfWorker(workerSrc: string): void { GlobalWorkerOptions.workerSrc = workerSrc; }
 
 export async function renderPdfPage(data: Uint8Array, pageNumber: number, canvas: HTMLCanvasElement, isCancelled?: () => boolean): Promise<void> {
+  await renderPdfPages(data, [{ pageNumber, canvas }], isCancelled);
+}
+
+export async function renderPdfPages(data: Uint8Array, targets: Array<{ pageNumber: number; canvas: HTMLCanvasElement }>, isCancelled?: () => boolean): Promise<void> {
   const pdf = await getDocument({ data }).promise;
-  if (isCancelled?.()) return;
-  const page = await pdf.getPage(pageNumber);
-  if (isCancelled?.()) return;
-  const viewport = page.getViewport({ scale: 2 });
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("PDF_PREVIEW_CONTEXT_FAILED");
-  canvas.width = viewport.width; canvas.height = viewport.height;
-  await page.render({ canvas, canvasContext: context, viewport }).promise;
+  for (const target of targets) {
+    if (isCancelled?.()) return;
+    const page = await pdf.getPage(target.pageNumber);
+    if (isCancelled?.()) return;
+    const viewport = page.getViewport({ scale: 2 });
+    const context = target.canvas.getContext("2d");
+    if (!context) throw new Error("PDF_PREVIEW_CONTEXT_FAILED");
+    target.canvas.width = viewport.width; target.canvas.height = viewport.height;
+    await page.render({ canvas: target.canvas, canvasContext: context, viewport }).promise;
+  }
 }
 
 export async function parsePdf(data: Uint8Array, sourcePath: string, onProgress?: (completed: number, total: number) => void): Promise<RawDocument> {
