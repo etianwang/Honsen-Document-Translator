@@ -20,14 +20,6 @@ configurePdfWorker(pdfWorkerUrl);
 
 interface DeepLKeyStatus { configured: boolean; source?: string; }
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-const progressFor = (stage: ProcessingStage, completed: number, total: number): number => {
-  const ratio = total ? completed / total : 0;
-  if (stage === "analyzing") return Math.round(ratio * 35);
-  if (stage === "ocr") return 35 + Math.round(ratio * 35);
-  if (stage === "layout") return 70 + Math.round(ratio * 20);
-  if (stage === "translating") return 90 + Math.round(ratio * 9);
-  return stage === "completed" ? 100 : 0;
-};
 const progressMessage = (stage: ProcessingStage, completed: number, total: number): string => {
   const pageLabel = total ? `第 ${completed}/${total} 页` : "准备中";
   if (stage === "analyzing") return `正在分析 PDF：${pageLabel}`;
@@ -78,14 +70,14 @@ function App() {
     try {
       setStage("analyzing"); setProgress(0); setMessage("正在分析 PDF：准备中");
       const bytes = browserFile ? new Uint8Array(await browserFile.arrayBuffer()) : await readFile(path);
-      const result = await new DocumentPipeline().process(bytes, path, { ocrEnabled: isTauri && ocrEnabled, ocrProvider: isTauri && ocrEnabled ? new TauriOcrProvider() : undefined, ocrLanguage: sourceLanguage === "AUTO" ? undefined : sourceLanguage, signal: controller.signal, onProgress: (pipelineStage, completed, total) => { setStage(pipelineStage); setProgress(progressFor(pipelineStage, completed, total)); setMessage(progressMessage(pipelineStage, completed, total)); } });
+      const result = await new DocumentPipeline().process(bytes, path, { ocrEnabled: isTauri && ocrEnabled, ocrProvider: isTauri && ocrEnabled ? new TauriOcrProvider() : undefined, ocrLanguage: sourceLanguage === "AUTO" ? undefined : sourceLanguage, signal: controller.signal, onProgress: (pipelineStage, completed, total) => { setStage(pipelineStage); setMessage(progressMessage(pipelineStage, completed, total)); } });
       const reconstructed = result.document;
       const pages = reconstructed.pages;
       setModel(reconstructed);
       if (!isTauri && originalUrl) URL.revokeObjectURL(originalUrl);
       setOriginalUrl(isTauri ? convertFileSrc(path) : URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })));
       setPageNumber(1); setZoom(1);
-      setName(path.split(/[\\/]/).pop()); setStage("completed"); setPhase("review-source"); setProgress(100);
+      setName(path.split(/[\\/]/).pop()); setStage("completed"); setPhase("review-source"); setProgress(0);
       setMessage(`已导入 ${pages.length} 页，请确认原文后点击开始翻译。`);
     } catch (error: unknown) {
       if (error instanceof DOMException && error.name === "AbortError") { setStage("idle"); setPhase("empty"); setMessage("已取消导入和 OCR。"); }
@@ -114,8 +106,8 @@ function App() {
     try {
       if (apiKey.trim() && rememberKey) setKeyStatus(await invoke<DeepLKeyStatus>("save_deepl_api_key", { request: { apiKey, remember: true } }));
       if (!apiKey.trim() && !keyStatus.configured) throw new Error("请先填写 DeepL API Key。");
-      setStage("translating"); setPhase("translating"); setMessage("Translating with DeepL...");
-      setModel(applyGlossary(await translateDocument(model, new TauriDeepLTranslator(apiKey.trim() || undefined, undefined, toDeepLSourceLanguage(sourceLanguage)), targetLanguage, { signal: controller.signal }), glossaryEntries));
+      setStage("translating"); setPhase("translating"); setProgress(0); setMessage("正在使用 DeepL 翻译：准备中");
+      setModel(applyGlossary(await translateDocument(model, new TauriDeepLTranslator(apiKey.trim() || undefined, undefined, toDeepLSourceLanguage(sourceLanguage)), targetLanguage, { signal: controller.signal, onProgress: (completed, total) => { setProgress(total ? Math.round(completed / total * 100) : 100); setMessage(total ? `正在使用 DeepL 翻译：${completed}/${total} 段` : "正在使用 DeepL 翻译：无文本段"); } }), glossaryEntries));
       setStage("completed"); setPhase("review-translation"); setMessage("DeepL translation completed.");
     } catch (error: unknown) {
       if (error instanceof DOMException && error.name === "AbortError") { setStage("idle"); setPhase(recoverAfterCancel("translating")); setMessage("已取消翻译。"); }

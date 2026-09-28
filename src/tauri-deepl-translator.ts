@@ -8,6 +8,7 @@ export class TauriDeepLTranslator implements Translator {
 
   async translate(request: TranslationRequest, options?: TranslationOptions): Promise<TranslationResult> {
     const translations: TranslationResult["translations"] = [];
+    options?.onProgress?.(0, request.segments.length);
     for (let offset = 0; offset < request.segments.length; offset += 50) {
       throwIfAborted(options?.signal);
       const batch = request.segments.slice(offset, offset + 50);
@@ -17,6 +18,7 @@ export class TauriDeepLTranslator implements Translator {
       throwIfAborted(options?.signal);
       if (result.translations.length !== batch.length) throw new Error("DEEPL_INVALID_RESPONSE: Translation count did not match input.");
       translations.push(...result.translations.map((translatedText, index) => ({ segmentId: batch[index].id, translatedText })));
+      options?.onProgress?.(translations.length, request.segments.length);
     }
     return { translations };
   }

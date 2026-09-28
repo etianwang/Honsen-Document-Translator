@@ -32,7 +32,7 @@ export interface OcrProvider { recognizePage(input: OcrPageInput): Promise<OcrPa
 export interface TranslationSegment { id: string; sourceText: string; sourceLanguage?: string; targetLanguage: string; context?: string; elementIds: string[]; }
 export interface TranslationRequest { segments: TranslationSegment[]; }
 export interface TranslationResult { translations: Array<{ segmentId: string; translatedText: string }>; }
-export interface TranslationOptions { signal?: AbortSignal; }
+export interface TranslationOptions { signal?: AbortSignal; onProgress?: (completed: number, total: number) => void; }
 export interface Translator { translate(request: TranslationRequest, options?: TranslationOptions): Promise<TranslationResult>; }
 export interface LayoutFitOptions { minFontScale: number; maxExpansionRatio: number; allowLineReflow: boolean; }
 export interface PdfExportResult { outputPath: string; }
