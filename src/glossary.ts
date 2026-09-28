@@ -1,3 +1,5 @@
+import { mapTextRuns, type DocumentModel } from "@pdf-translator/document-model";
+
 export interface GlossaryEntry { source: string; target: string; }
 
 export function parseGlossaryYaml(yaml: string): GlossaryEntry[] {
@@ -18,8 +20,7 @@ export function parseGlossaryYaml(yaml: string): GlossaryEntry[] {
 export function applyGlossary(model: DocumentModel, entries: GlossaryEntry[]): DocumentModel {
   if (entries.length === 0) return model;
   const terms = new Map(entries.map((entry) => [entry.source.trim(), entry.target.trim()]));
-  return { ...model, pages: model.pages.map((page) => ({ ...page, blocks: page.blocks.map((block) => block.type !== "text" ? block : ({ ...block, paragraphs: block.paragraphs.map((paragraph) => ({ ...paragraph, lines: paragraph.lines.map((line) => ({ ...line, runs: line.runs.map((run) => ({ ...run, translatedText: terms.get(run.text.trim()) ?? run.translatedText })) })) })) })) })) };
+  return mapTextRuns(model, (run) => ({ ...run, translatedText: terms.get(run.text.trim()) ?? run.translatedText }));
 }
 
 function unquote(value: string): string { return value.replace(/^['"]|['"]$/g, ""); }
-import type { DocumentModel } from "@pdf-translator/document-model";

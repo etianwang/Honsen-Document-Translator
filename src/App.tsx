@@ -5,7 +5,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Packer } from "docx";
 import { buildDocx, validateDocx } from "@pdf-translator/docx-engine";
-import type { DocumentModel, DocumentPage, ProcessingStage } from "@pdf-translator/document-model";
+import type { DocumentModel, DocumentPage, ParagraphModel, ProcessingStage } from "@pdf-translator/document-model";
 import { translateDocument } from "@pdf-translator/translation-engine";
 import { DocumentPipeline } from "@pdf-translator/document-pipeline";
 import { configurePdfWorker, renderPdfPage } from "@pdf-translator/pdf-parser";
@@ -158,7 +158,20 @@ function App() {
   const currentPage = model?.pages[pageNumber - 1];
   const isRtlPage = currentPage?.blocks.some((block) => block.type === "text" && block.paragraphs.some((paragraph) => paragraph.direction === "rtl")) ?? false;
   function commitLine(lineId: string, translatedText: string): void {
-    setModel((current) => !current ? current : ({ ...current, pages: current.pages.map((page) => ({ ...page, blocks: page.blocks.map((block) => block.type !== "text" ? block : ({ ...block, paragraphs: block.paragraphs.map((paragraph) => ({ ...paragraph, lines: paragraph.lines.map((line) => line.id !== lineId ? line : ({ ...line, runs: line.runs.map((run, index) => ({ ...run, translatedText: index ? "" : translatedText })) })) })) })) })) }));
+    setModel((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        pages: current.pages.map((page) => ({
+          ...page,
+          blocks: page.blocks.map((block) => block.type === "text"
+            ? { ...block, paragraphs: updateLines(block.paragraphs, lineId, translatedText) }
+            : block.type === "table"
+              ? { ...block, rows: block.rows.map((row) => ({ ...row, cells: row.cells.map((cell) => ({ ...cell, content: updateLines(cell.content, lineId, translatedText) })) })) }
+              : block),
+        })),
+      };
+    });
     setMessage("译文修改已应用，将随导出一并保存。");
   }
   const previewTerms = useMemo(() => glossaryEntries.slice(0, 3), [glossaryEntries]);
@@ -194,6 +207,10 @@ function App() {
 
 function EmptyPreview({ text }: { text: string }) { return <div className="empty-preview"><span>▧</span><p>{text}</p></div>; }
 
+function updateLines(paragraphs: ParagraphModel[], lineId: string, translatedText: string): ParagraphModel[] {
+  return paragraphs.map((paragraph) => ({ ...paragraph, lines: paragraph.lines.map((line) => line.id !== lineId ? line : ({ ...line, runs: line.runs.map((run, index) => ({ ...run, translatedText: index ? "" : translatedText })) })) }));
+}
+
 function TranslatedPagePreview({ sourceBytes, page, onLineChange }: { sourceBytes?: Uint8Array; page: DocumentPage; onLineChange: (lineId: string, translatedText: string) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [renderError, setRenderError] = useState(false);
@@ -210,7 +227,7 @@ function TranslatedPagePreview({ sourceBytes, page, onLineChange }: { sourceByte
   }, [attempt, page.number, sourceBytes]);
   if (!sourceBytes) return <EmptyPreview text="无法读取原始 PDF。" />;
   if (renderError) return <div className="preview-retry"><EmptyPreview text="原页背景暂时无法渲染。" /><button className="button secondary" type="button" onClick={() => { setRenderError(false); setAttempt((value) => value + 1); }}>重试预览</button></div>;
-  const lines = page.blocks.flatMap((block) => block.type === "text" ? block.paragraphs.flatMap((paragraph) => paragraph.lines) : []);
+  const lines = page.blocks.flatMap((block) => block.type === "text" ? block.paragraphs.flatMap((paragraph) => paragraph.lines) : block.type === "table" ? block.rows.flatMap((row) => row.cells).flatMap((cell) => cell.content).flatMap((paragraph) => paragraph.lines) : []);
   return <div className="translated-page" style={{ aspectRatio: `${page.width} / ${page.height}` }} aria-label={`第 ${page.number} 页译文，保留原始图片与版式`}>
     <canvas ref={canvasRef} aria-hidden="true" />
     {lines.map((line) => {

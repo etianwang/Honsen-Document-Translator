@@ -45,7 +45,7 @@ function detectSimpleTable(lines: TextLine[], pageNumber: number): TableBlock | 
   if (!lines.every((line) => line.runs.every((run, index) => Math.abs(run.bbox.x - anchors[index]) <= 5))) return undefined;
   // ponytail: detects only fully aligned, bordered-style tables; add drawing-line analysis for irregular tables.
   const columnWidths = anchors.map((anchor, index) => (index + 1 < anchors.length ? anchors[index + 1] - anchor : Math.max(...lines.map((line) => line.runs[index].bbox.width))));
-  return { id: `page-${pageNumber}-table-0`, type: "table", bbox: bounds(lines.map((line) => line.bbox)), readingOrder: 0, columnWidths, style: { borderColor: "D9D9D9", borderWidth: 1 }, rows: lines.map((line, rowIndex) => ({ index: rowIndex, cells: line.runs.map((run, columnIndex) => ({ rowIndex, columnIndex, bbox: run.bbox, content: [{ id: `${run.id}-paragraph`, bbox: run.bbox, alignment: "left", lines: [{ id: `${run.id}-line`, bbox: run.bbox, runs: [run] }] }], style: {} })) })) };
+  return { id: `page-${pageNumber}-table-0`, type: "table", bbox: bounds(lines.map((line) => line.bbox)), readingOrder: 0, columnWidths, style: { borderColor: "D9D9D9", borderWidth: 1 }, rows: lines.map((line, rowIndex) => ({ index: rowIndex, height: line.bbox.height, cells: line.runs.map((run, columnIndex) => ({ rowIndex, columnIndex, bbox: run.bbox, content: [{ id: `${run.id}-paragraph`, bbox: run.bbox, alignment: "left", lines: [{ id: `${run.id}-line`, bbox: run.bbox, runs: [run] }] }], style: {} })) })) };
 }
 
 function groupLines(items: RawTextItem[]): TextLine[] {
