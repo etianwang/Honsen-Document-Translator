@@ -15,7 +15,7 @@ Audited: 2026-09-26. This is an MVP codebase, not production ready.
 | PDF Export | PARTIAL | portable build bundles a full LibreOffice runtime and prefers its headless `soffice.exe`; Word is development fallback | no clean-machine installation or visual-fidelity validation | clean-machine export and visual fixtures | P0 |
 | Frontend | PARTIAL | open, translate, preview, export controls | no settings, cancellation, drag/drop, issues panel | stateful pipeline UI | P1 |
 | Tauri / Filesystem | PARTIAL | dialog-mediated read/write permissions are explicit; no broad static filesystem scope | no project workspace or persistence boundary | explicit project workspace commands | P0 |
-| State / persistence | PARTIAL | user-saveable project JSON restores document/settings and source preview when its path remains valid | no autosave, project workspace, relocation recovery | workspace and autosave | P0 |
+| State / persistence | NOT IMPLEMENTED | 项目保存与恢复功能已移除，避免在主界面增加非核心操作 | no project workspace or autosave | 仅在用户再次需要时实现项目工作区 | P1 |
 | Logging / errors | MISSING | user-facing string errors | no diagnostics or page recovery | structured redacted logs and typed errors | P0 |
 | Testing | PARTIAL | 10 unit/integration-style tests | no E2E, visual diff, OCR or large-file tests | release test suites and golden fixtures | P1 |
 | Performance | MISSING | synchronous client-side flow | large documents can freeze UI | background pipeline and bounded concurrency | P1 |
