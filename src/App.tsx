@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readFile, writeFile } from "@tauri-apps/plugin-fs";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Packer } from "docx";
 import { buildDocx, validateDocx } from "@pdf-translator/docx-engine";
@@ -79,8 +79,8 @@ function App() {
       const reconstructed = result.document;
       const pages = reconstructed.pages;
       setModel(reconstructed);
-      if (originalUrl) URL.revokeObjectURL(originalUrl);
-      setOriginalUrl(URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })));
+      if (!isTauri && originalUrl) URL.revokeObjectURL(originalUrl);
+      setOriginalUrl(isTauri ? convertFileSrc(path) : URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })));
       setPageNumber(1); setZoom(1);
       setName(path.split(/[\\/]/).pop()); setStage("completed"); setProgress(100);
       setMessage(`Loaded ${pages.length} page${pages.length === 1 ? "" : "s"}.`);
