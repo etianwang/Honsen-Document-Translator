@@ -13,7 +13,7 @@ import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
 import { TauriOcrProvider } from "./tauri-ocr-provider";
 import { applyGlossary, type GlossaryEntry, parseGlossaryYaml } from "./glossary";
-import { canExport, canTranslate, isWorkflowBusy, recoverAfterCancel, type WorkflowPhase } from "./workflow-state";
+import { canExport, canTranslate, isWorkflowBusy, recoverAfterCancel, restoreSourceReview, type WorkflowPhase } from "./workflow-state";
 import "./App.css";
 
 configurePdfWorker(pdfWorkerUrl);
@@ -68,6 +68,7 @@ function App() {
   const activeAbortController = useRef<AbortController | undefined>(undefined);
 
   useEffect(() => { if (isTauri) void invoke<DeepLKeyStatus>("deepl_key_status").then(setKeyStatus).catch(() => setKeyStatus({ configured: false })); }, []);
+  useEffect(() => { setPhase((current) => restoreSourceReview(current, Boolean(model) && stage === "completed")); }, [model, stage]);
 
   async function selectPdf(): Promise<void> {
     const browserFile = isTauri ? undefined : await pickDomPdf();

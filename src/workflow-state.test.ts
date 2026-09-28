@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canExport, canTranslate, isWorkflowBusy, recoverAfterCancel } from "./workflow-state";
+import { canExport, canTranslate, isWorkflowBusy, recoverAfterCancel, restoreSourceReview } from "./workflow-state";
 
 describe("workflow state", () => {
   it("only permits translation after source review and export after translation review", () => {
@@ -15,5 +15,11 @@ describe("workflow state", () => {
     expect(recoverAfterCancel("importing")).toBe("empty");
     expect(recoverAfterCancel("translating")).toBe("review-source");
     expect(recoverAfterCancel("exporting-pdf")).toBe("review-translation");
+  });
+
+  it("restores source review for a completed document after a development hot reload", () => {
+    expect(restoreSourceReview("empty", true)).toBe("review-source");
+    expect(restoreSourceReview("empty", false)).toBe("empty");
+    expect(restoreSourceReview("review-translation", true)).toBe("review-translation");
   });
 });

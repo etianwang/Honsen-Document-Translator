@@ -4,3 +4,4 @@ export const isWorkflowBusy = (phase: WorkflowPhase): boolean => ["importing", "
 export const canTranslate = (phase: WorkflowPhase): boolean => phase === "review-source";
 export const canExport = (phase: WorkflowPhase): boolean => phase === "review-translation";
 export const recoverAfterCancel = (phase: WorkflowPhase): WorkflowPhase => phase === "importing" ? "empty" : phase === "translating" ? "review-source" : "review-translation";
+export const restoreSourceReview = (phase: WorkflowPhase, hasCompletedDocument: boolean): WorkflowPhase => phase === "empty" && hasCompletedDocument ? "review-source" : phase;
