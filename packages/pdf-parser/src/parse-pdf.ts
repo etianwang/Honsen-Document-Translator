@@ -4,7 +4,7 @@ import type { DocumentIssue, ImageBlock, RawDocument, RawPage, RawTextItem } fro
 
 export function configurePdfWorker(workerSrc: string): void { GlobalWorkerOptions.workerSrc = workerSrc; }
 
-export async function parsePdf(data: Uint8Array, sourcePath: string): Promise<RawDocument> {
+export async function parsePdf(data: Uint8Array, sourcePath: string, onProgress?: (completed: number, total: number) => void): Promise<RawDocument> {
   if (!containsPdfHeader(data)) throw new Error("INVALID_PDF: The selected file does not contain a PDF header.");
   let pdf: PDFDocumentProxy;
   try {
@@ -12,11 +12,12 @@ export async function parsePdf(data: Uint8Array, sourcePath: string): Promise<Ra
   } catch (error: unknown) {
     throw normalizePdfError(error);
   }
+  onProgress?.(0, pdf.numPages);
   const pages: RawPage[] = []; const issues: DocumentIssue[] = [];
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     let page;
     try { page = await pdf.getPage(pageNumber); }
-    catch (error: unknown) { issues.push(normalizePdfPageError(error, pageNumber)); continue; }
+    catch (error: unknown) { issues.push(normalizePdfPageError(error, pageNumber)); onProgress?.(pageNumber, pdf.numPages); continue; }
     const viewport = page.getViewport({ scale: 1 });
     let content;
     try { content = await page.getTextContent(); }
@@ -27,7 +28,7 @@ export async function parsePdf(data: Uint8Array, sourcePath: string): Promise<Ra
     let images: ImageBlock[] = [];
     try { images = await extractImages(page, pageNumber); }
     catch (error: unknown) { issues.push(normalizePdfPageError(error, pageNumber, "PDF_IMAGE_EXTRACTION_FAILED")); }
-    pages.push({ number: pageNumber, width: viewport.width, height: viewport.height, rotation: page.rotate, textItems, images });
+    pages.push({ number: pageNumber, width: viewport.width, height: viewport.height, rotation: page.rotate, textItems, images }); onProgress?.(pageNumber, pdf.numPages);
   }
   return { sourcePath, pages, issues };
 }

@@ -19,12 +19,29 @@ configurePdfWorker(pdfWorkerUrl);
 
 interface DeepLKeyStatus { configured: boolean; source?: string; }
 const isBusy = (stage: ProcessingStage): boolean => !["idle", "completed", "failed"].includes(stage);
+const progressFor = (stage: ProcessingStage, completed: number, total: number): number => {
+  const ratio = total ? completed / total : 0;
+  if (stage === "analyzing") return Math.round(ratio * 35);
+  if (stage === "ocr") return 35 + Math.round(ratio * 35);
+  if (stage === "layout") return 70 + Math.round(ratio * 20);
+  if (stage === "translating") return 90 + Math.round(ratio * 9);
+  return stage === "completed" ? 100 : 0;
+};
+const progressMessage = (stage: ProcessingStage, completed: number, total: number): string => {
+  const pageLabel = total ? `第 ${completed}/${total} 页` : "准备中";
+  if (stage === "analyzing") return `正在分析 PDF：${pageLabel}`;
+  if (stage === "ocr") return `正在 OCR：${pageLabel}`;
+  if (stage === "layout") return `正在重建版式：${pageLabel}`;
+  if (stage === "translating") return "正在通过 DeepL 翻译…";
+  return `${stage} document…`;
+};
 
 function App() {
   const [model, setModel] = useState<DocumentModel>();
   const [name, setName] = useState<string>();
   const [stage, setStage] = useState<ProcessingStage>("idle");
   const [message, setMessage] = useState("No document loaded.");
+  const [progress, setProgress] = useState(0);
   const [originalUrl, setOriginalUrl] = useState<string>();
   const [pageNumber, setPageNumber] = useState(1);
   const [zoom, setZoom] = useState(1);
@@ -47,16 +64,16 @@ function App() {
     if (typeof path !== "string") return;
     const controller = new AbortController(); activeAbortController.current = controller;
     try {
-      setStage("analyzing"); setMessage("Analyzing PDF...");
+      setStage("analyzing"); setProgress(0); setMessage("正在分析 PDF：准备中");
       const bytes = await readFile(path);
-      const result = await new DocumentPipeline().process(bytes, path, { ocrEnabled, ocrProvider: ocrEnabled ? new TauriOcrProvider() : undefined, ocrLanguage: sourceLanguage === "AUTO" ? undefined : sourceLanguage, signal: controller.signal, onProgress: (pipelineStage) => { setStage(pipelineStage); setMessage(`${pipelineStage} document...`); } });
+      const result = await new DocumentPipeline().process(bytes, path, { ocrEnabled, ocrProvider: ocrEnabled ? new TauriOcrProvider() : undefined, ocrLanguage: sourceLanguage === "AUTO" ? undefined : sourceLanguage, signal: controller.signal, onProgress: (pipelineStage, completed, total) => { setStage(pipelineStage); setProgress(progressFor(pipelineStage, completed, total)); setMessage(progressMessage(pipelineStage, completed, total)); } });
       const reconstructed = result.document;
       const pages = reconstructed.pages;
       setModel(reconstructed);
       if (originalUrl) URL.revokeObjectURL(originalUrl);
       setOriginalUrl(URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })));
       setPageNumber(1); setZoom(1);
-      setName(path.split(/[\\/]/).pop()); setStage("completed");
+      setName(path.split(/[\\/]/).pop()); setStage("completed"); setProgress(100);
       setMessage(`Loaded ${pages.length} page${pages.length === 1 ? "" : "s"}.`);
     } catch (error: unknown) {
       if (error instanceof DOMException && error.name === "AbortError") { setStage("idle"); setMessage("已取消导入和 OCR。"); }
@@ -138,7 +155,6 @@ function App() {
     setModel({ ...model, pages: model.pages.map((page) => page.number !== pageNumber ? page : ({ ...page, blocks: page.blocks.map((block) => block.type !== "text" ? block : ({ ...block, paragraphs: block.paragraphs.map((paragraph) => ({ ...paragraph, lines: paragraph.lines.map((line) => ({ ...line, runs: line.runs.map((run) => ({ ...run, translatedText: written ? "" : (written = true, draftText) })) })) })) })) })) });
     setMessage("译文修改已应用，将随导出一并保存。");
   }
-  const progress = stage === "completed" ? 100 : stage === "translating" ? 68 : stage === "failed" ? 0 : model ? 35 : 0;
   const previewTerms = useMemo(() => glossaryEntries.slice(0, 3), [glossaryEntries]);
   const totalPages = model?.pages.length ?? 0;
   const issues = model?.issues ?? [];

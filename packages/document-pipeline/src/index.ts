@@ -9,12 +9,12 @@ export interface PipelineOptions { targetLanguage?: string; translator?: Transla
 export interface ProcessingResult { analysis: DocumentAnalysis; document: DocumentModel; issues: import("@pdf-translator/document-model").DocumentIssue[]; }
 
 export class DocumentPipeline {
-  async analyze(input: Uint8Array, sourcePath: string, signal?: AbortSignal): Promise<{ raw: RawDocument; analysis: DocumentAnalysis }> {
-    throwIfAborted(signal); const raw = await parsePdf(input, sourcePath); throwIfAborted(signal);
+  async analyze(input: Uint8Array, sourcePath: string, signal?: AbortSignal, onProgress?: (completed: number, total: number) => void): Promise<{ raw: RawDocument; analysis: DocumentAnalysis }> {
+    throwIfAborted(signal); const raw = await parsePdf(input, sourcePath, onProgress); throwIfAborted(signal);
     return { raw, analysis: { pageTypes: raw.pages.map((page) => ({ pageNumber: page.number, ...classify(page.textItems.length, page.images?.length ?? 0) })) } };
   }
   async process(input: Uint8Array, sourcePath: string, options: PipelineOptions = {}): Promise<ProcessingResult> {
-    options.onProgress?.("analyzing", 0, 1); const { raw, analysis } = await this.analyze(input, sourcePath, options.signal);
+    options.onProgress?.("analyzing", 0, 0); const { raw, analysis } = await this.analyze(input, sourcePath, options.signal, (completed, total) => options.onProgress?.("analyzing", completed, total));
     if (options.ocrEnabled && options.ocrProvider) {
       const scanned = raw.pages.filter((page) => analysis.pageTypes.find((item) => item.pageNumber === page.number)?.type === "scanned");
       options.onProgress?.("ocr", 0, scanned.length);
