@@ -10,7 +10,7 @@ import { translateDocument } from "@pdf-translator/translation-engine";
 import { DocumentPipeline } from "@pdf-translator/document-pipeline";
 import { configurePdfWorker } from "@pdf-translator/pdf-parser";
 import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs?url";
-import { getDocument } from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.mjs";
+import { getDocument, GlobalWorkerOptions } from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.mjs";
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
 import { TauriOcrProvider } from "./tauri-ocr-provider";
 import { applyGlossary, type GlossaryEntry, parseGlossaryYaml } from "./glossary";
@@ -18,6 +18,7 @@ import { canExport, canTranslate, isWorkflowBusy, recoverAfterCancel, restoreSou
 import "./App.css";
 
 configurePdfWorker(pdfWorkerUrl);
+GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 interface DeepLKeyStatus { configured: boolean; source?: string; }
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
