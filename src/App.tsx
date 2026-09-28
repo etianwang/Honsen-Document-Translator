@@ -234,7 +234,9 @@ function TranslatedPagePreview({ sourceBytes, page, onLineChange }: { sourceByte
       const original = line.runs.map((run) => run.text).join("");
       const translated = line.runs.map((run) => run.translatedText ?? "").join("");
       const scale = Math.sqrt(Math.min(1, original.length / Math.max(original.length, translated.length)));
-      return <textarea key={line.id} className="translated-line" aria-label={`编辑第 ${page.number} 页译文`} dir={line.direction === "rtl" ? "rtl" : "ltr"} defaultValue={translated} onBlur={(event) => onLineChange(line.id, event.currentTarget.value)} style={{ left: `${line.bbox.x / page.width * 100}%`, top: `${(page.height - line.bbox.y - line.bbox.height) / page.height * 100}%`, width: `${line.bbox.width / page.width * 100}%`, minHeight: `${line.bbox.height / page.height * 100}%`, fontSize: `${Math.max(1.1, line.bbox.height / page.width * 100 * scale)}cqw` }} />;
+      const units = [...translated].reduce((total, character) => total + (character.charCodeAt(0) > 255 ? 1 : 0.55), 0.55);
+      const fontSize = Math.min(line.bbox.height / page.width * 100 * scale, Math.max(0.6, (line.bbox.width / page.width * 100 - 0.25) / units));
+      return <textarea key={line.id} className="translated-line" aria-label={`编辑第 ${page.number} 页译文`} dir={line.direction === "rtl" ? "rtl" : "ltr"} wrap="off" defaultValue={translated} onBlur={(event) => onLineChange(line.id, event.currentTarget.value)} style={{ left: `${line.bbox.x / page.width * 100}%`, top: `${(page.height - line.bbox.y - line.bbox.height) / page.height * 100}%`, width: `${line.bbox.width / page.width * 100}%`, minHeight: `${line.bbox.height / page.height * 100}%`, fontSize: `${fontSize}cqw` }} />;
     })}
   </div>;
 }
