@@ -83,7 +83,7 @@ function App() {
       setOriginalUrl(isTauri ? convertFileSrc(path) : URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })));
       setPageNumber(1); setZoom(1);
       setName(path.split(/[\\/]/).pop()); setStage("completed"); setProgress(100);
-      setMessage(`Loaded ${pages.length} page${pages.length === 1 ? "" : "s"}.`);
+      setMessage(`已导入 ${pages.length} 页，请确认原文后点击开始翻译。`);
     } catch (error: unknown) {
       if (error instanceof DOMException && error.name === "AbortError") { setStage("idle"); setMessage("已取消导入和 OCR。"); }
       else { setStage("failed"); setMessage(error instanceof Error ? error.message : "PDF parsing failed."); }
@@ -160,10 +160,10 @@ function App() {
 
   const currentPage = model?.pages[pageNumber - 1];
   const isRtlPage = currentPage?.blocks.some((block) => block.type === "text" && block.paragraphs.some((paragraph) => paragraph.direction === "rtl")) ?? false;
-  const text = currentPage?.blocks.filter((block) => block.type === "text").flatMap((block) => block.paragraphs).flatMap((paragraph) => paragraph.lines).flatMap((line) => line.runs).map((run) => run.translatedText ?? run.text).join(" ");
+  const text = currentPage?.blocks.filter((block) => block.type === "text").flatMap((block) => block.paragraphs).flatMap((paragraph) => paragraph.lines).flatMap((line) => line.runs).map((run) => run.translatedText).filter((value): value is string => value !== undefined).join(" ");
   useEffect(() => { setDraftText(text ?? ""); }, [pageNumber, text]);
   function commitDraft(): void {
-    if (!model || draftText === text) return;
+    if (!model || !text || draftText === text) return;
     // ponytail: edits replace the current page's flattened text; preserve per-run editing when the DIR editor is introduced.
     let written = false;
     setModel({ ...model, pages: model.pages.map((page) => page.number !== pageNumber ? page : ({ ...page, blocks: page.blocks.map((block) => block.type !== "text" ? block : ({ ...block, paragraphs: block.paragraphs.map((paragraph) => ({ ...paragraph, lines: paragraph.lines.map((line) => ({ ...line, runs: line.runs.map((run) => ({ ...run, translatedText: written ? "" : (written = true, draftText) })) })) })) })) })) });
