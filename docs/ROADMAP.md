@@ -23,6 +23,7 @@
 ## Phase 3 — OCR
 
 - [ ] Page-level text/scanned/hybrid detection and OCR provider support
+- [ ] Scanned-PDF VNext: OCR region detection, protected barcode/image regions, value filtering, fitting, and collision validation; see [Scanned PDF VNext](SCANNED_PDF_VNEXT.md)
 
 ## Phase 4 — Advanced layout
 

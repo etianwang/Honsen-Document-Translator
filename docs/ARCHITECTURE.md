@@ -35,6 +35,10 @@ For pages containing connected vector-cell rectangles, the layout engine treats 
 
 Pages without enough connected vector rectangles retain the existing text-coordinate fallback. This is intentional: scanned pages, unbordered tables, and decorative paths do not provide reliable grid geometry. See [Layout V2](LAYOUT_V2.md) for scope and manual validation.
 
+## Next version: scanned-PDF layout
+
+The next layout target is [Scanned PDF VNext](SCANNED_PDF_VNEXT.md). It keeps the current local OCR engine and adds geometry-first OCR regions: table cells, images, barcodes, stamps, and other excluded regions are identified before OCR text is grouped or translated. A translation may only draw inside its region; preview and PDF export consume the same fitted result.
+
 ## Tests
 
 Unit tests protect DIR contracts and pure layout logic. Later integration tests exercise PDF -> DIR -> DOCX -> PDF. Visual regression uses fixture PDFs, generated-page PNGs, and pixel-difference artifacts. Fixtures live under `tests/fixtures` when parsing begins.
