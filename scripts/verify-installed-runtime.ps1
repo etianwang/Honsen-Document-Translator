@@ -8,6 +8,9 @@ $installerPath = (Resolve-Path -LiteralPath $Installer).Path
 $fixturePath = (Resolve-Path -LiteralPath $Fixture).Path
 $installRoot = Join-Path ([System.IO.Path]::GetTempPath()) "honsen-installer-check-$PID"
 $imagePrefix = Join-Path ([System.IO.Path]::GetTempPath()) "honsen-ocr-proof-$PID"
+$docx = Join-Path ([System.IO.Path]::GetTempPath()) "honsen-export-proof-$PID.docx"
+$pdf = [System.IO.Path]::ChangeExtension($docx, 'pdf')
+$profile = Join-Path ([System.IO.Path]::GetTempPath()) "honsen-libreoffice-check-$PID"
 
 try {
   $install = Start-Process -FilePath $installerPath -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$installRoot`"") -Wait -PassThru
@@ -26,11 +29,21 @@ try {
   $ocrText = & $tesseract "$imagePrefix.png" stdout --tessdata-dir $tessdata -l eng --psm 3
   if ($LASTEXITCODE -ne 0 -or ($ocrText -join "`n") -notmatch 'Fixture\s+title') { throw 'Bundled Tesseract did not recognize the OCR fixture.' }
 
-  Write-Host 'Installed-runtime verification passed: Inno install, bundled Poppler/Tesseract OCR, and bundled LibreOffice presence.'
+  & node (Join-Path $PSScriptRoot 'create-export-fixture.mjs') $docx
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $docx)) { throw 'Could not create the DOCX export fixture.' }
+  $profileArg = "-env:UserInstallation=file:///$($profile.Replace('\\', '/'))"
+  $conversion = Start-Process -FilePath $soffice -ArgumentList @('--headless', $profileArg, '--convert-to', 'pdf', '--outdir', ([System.IO.Path]::GetTempPath()), $docx) -PassThru
+  try { Wait-Process -Id $conversion.Id -Timeout 60 -ErrorAction Stop } catch { if (-not (Test-Path -LiteralPath $pdf)) { throw 'Bundled LibreOffice did not finish the DOCX export fixture.' } }
+  if (Get-Process -Id $conversion.Id -ErrorAction SilentlyContinue) { Stop-Process -Id $conversion.Id -Force; Wait-Process -Id $conversion.Id -ErrorAction SilentlyContinue }
+  if (-not (Test-Path -LiteralPath $pdf) -or (Get-Item -LiteralPath $pdf).Length -eq 0) { throw 'Bundled LibreOffice could not export the DOCX fixture.' }
+
+  Write-Host 'Installed-runtime verification passed: Inno install, bundled Poppler/Tesseract OCR, bundled LibreOffice PDF export, and uninstall.'
 }
 finally {
   $image = "$imagePrefix.png"
   if (Test-Path -LiteralPath $image) { Remove-Item -LiteralPath $image -Force }
+  foreach ($path in @($docx, $pdf)) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
+  if (Test-Path -LiteralPath $profile) { Remove-Item -LiteralPath $profile -Recurse -Force }
   $uninstaller = Join-Path $installRoot 'unins000.exe'
   if (Test-Path -LiteralPath $uninstaller) {
     $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru

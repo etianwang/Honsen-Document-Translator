@@ -10,7 +10,7 @@ Current verified baseline (2026-09-30):
 - [x] real minimal DeepL integration check without outputting the API Key
 - [x] DOCX OOXML package validation
 - [x] Inno 安装包构建
-- [ ] `pnpm verify:installed-runtime`: 安装、内置 OCR、LibreOffice 存在、卸载
+- [x] `pnpm verify:installed-runtime`：v1.0.0 Inno 安装、内置 Poppler/Tesseract OCR、内置 LibreOffice DOCX→PDF、卸载（2026-09-30）
 - [ ] 干净 Windows 虚拟机：安装 / 升级 / 卸载，以及无系统 OCR/Office 依赖验证
 - [ ] E2E happy path, visual regression, large-file test
 - [x] source/Git key scan, production dependency audit and privacy data-flow documentation
