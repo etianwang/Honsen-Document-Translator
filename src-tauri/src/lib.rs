@@ -267,6 +267,13 @@ fn libreoffice_path() -> PathBuf {
     bundled_resource("libreoffice/program/soffice.exe").unwrap_or_else(|| PathBuf::from("soffice"))
 }
 
+fn libreoffice_profile_dir(nonce: u128) -> Result<PathBuf, String> {
+    let system_drive = std::env::var_os("SystemDrive").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("C:"));
+    let profile = system_drive.join("Temp").join(format!("honsen-libreoffice-{nonce}"));
+    fs::create_dir_all(&profile).map_err(|_| "PDF_EXPORT_FAILED: could not create the LibreOffice temporary profile".to_owned())?;
+    Ok(profile)
+}
+
 fn bundled_resource(relative: &str) -> Option<PathBuf> {
     let current = std::env::current_dir().ok();
     let executable = std::env::current_exe().ok().and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
@@ -351,7 +358,7 @@ fn export_docx_to_pdf(docx_bytes: Vec<u8>, output_path: String) -> Result<(), St
     let temporary_pdf = temporary_docx.with_extension("pdf");
     fs::write(&temporary_docx, docx_bytes).map_err(|error| format!("DOCX_GENERATION_FAILED: {error}"))?;
     let temporary_dir = temporary_docx.parent().ok_or("PDF_EXPORT_FAILED: temporary directory missing")?;
-    let profile = temporary_dir.join(format!("honsen-libreoffice-{nonce}"));
+    let profile = libreoffice_profile_dir(nonce)?;
     let profile_arg = format!("-env:UserInstallation=file:///{}", profile.to_string_lossy().replace('\\', "/"));
     let libreoffice_result = Command::new(libreoffice_path())
         .args(["--headless", &profile_arg, "--convert-to", "pdf", "--outdir", temporary_dir.to_str().ok_or("PDF_EXPORT_FAILED: invalid temporary path")?, temporary_docx.to_str().ok_or("PDF_EXPORT_FAILED: invalid temporary path")?])

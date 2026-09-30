@@ -6,11 +6,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $installerPath = (Resolve-Path -LiteralPath $Installer).Path
 $fixturePath = (Resolve-Path -LiteralPath $Fixture).Path
+$workingTemp = Join-Path $env:SystemDrive 'Temp'
 $installRoot = Join-Path ([System.IO.Path]::GetTempPath()) "honsen-installer-check-$PID"
 $imagePrefix = Join-Path ([System.IO.Path]::GetTempPath()) "honsen-ocr-proof-$PID"
-$docx = Join-Path ([System.IO.Path]::GetTempPath()) "honsen-export-proof-$PID.docx"
+$docx = Join-Path $workingTemp "honsen-export-proof-$PID.docx"
 $pdf = [System.IO.Path]::ChangeExtension($docx, 'pdf')
-$profile = Join-Path ([System.IO.Path]::GetTempPath()) "honsen-libreoffice-check-$PID"
+$profile = Join-Path $workingTemp "honsen-libreoffice-check-$PID"
 
 function Stop-TestLibreOffice([string]$InstallRoot) {
   $expected = Join-Path $InstallRoot 'resources\libreoffice\program\soffice.exe'
@@ -48,8 +49,8 @@ try {
 
   & node (Join-Path $PSScriptRoot 'create-export-fixture.mjs') $docx
   if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $docx)) { throw 'Could not create the DOCX export fixture.' }
-  $profileArg = "-env:UserInstallation=file:///$($profile.Replace('\\', '/'))"
-  & $soffice '--headless' $profileArg '--convert-to' 'pdf' '--outdir' ([System.IO.Path]::GetTempPath()) $docx
+  $profileArg = "-env:UserInstallation=$(([Uri]$profile).AbsoluteUri)"
+  & $soffice '--headless' $profileArg '--convert-to' 'pdf' '--outdir' $workingTemp $docx
   if ($LASTEXITCODE -ne 0) { throw 'Bundled LibreOffice did not start the DOCX export fixture.' }
   $deadline = (Get-Date).AddSeconds(60)
   while (-not (Test-Path -LiteralPath $pdf) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }

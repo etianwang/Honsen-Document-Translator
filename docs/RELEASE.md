@@ -1,6 +1,6 @@
 # Release
 
-Current status: **v1.0.0 is an unsigned public beta, not a production-ready release**. The bundled Poppler/Tesseract Windows binaries have unresolved redistribution evidence; see [THIRD_PARTY_AUDIT.md](THIRD_PARTY_AUDIT.md).
+Current status: **v1.0.1 is an unsigned internal release**. The bundled Poppler/Tesseract Windows binaries have unresolved external-redistribution evidence; see [THIRD_PARTY_AUDIT.md](THIRD_PARTY_AUDIT.md).
 
 Before the next stable Windows release, set a SemVer version, application publisher, icon, and installer configuration; sign the resulting installer with the organization certificate; verify clean install, upgrade, uninstall, PDF export, and absence of secrets before publication. Telemetry is disabled by design.
 
