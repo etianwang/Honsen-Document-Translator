@@ -1,4 +1,4 @@
-use std::{fs, io::Write, path::PathBuf, process::Command, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{ffi::OsStr, fs, io::Write, os::windows::process::CommandExt, path::PathBuf, process::Command, time::{Duration, SystemTime, UNIX_EPOCH}};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::Manager;
@@ -10,6 +10,7 @@ const KEYRING_ACCOUNT: &str = "deepl-api-key";
 const UPDATE_REPOSITORY: &str = "etianwang/Honsen-PDF-Translator";
 const UPDATE_INSTALLER: &str = "Honsen-PDF-Translator-Setup.exe";
 const UPDATE_CHECKSUMS: &str = "SHA256SUMS.json";
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +99,12 @@ struct UpdateStatus { available: bool, current_version: String, version: Option<
 
 struct AvailableUpdate { version: String, release_notes: String, installer_url: String, sha256: String }
 
+fn background_command(program: impl AsRef<OsStr>) -> Command {
+    let mut command = Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
 fn deepl_key(provided_key: Option<&str>) -> Result<String, String> {
     if let Some(key) = provided_key.filter(|key| !key.trim().is_empty()) { return Ok(key.trim().to_owned()); }
     if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT) {
@@ -158,7 +165,7 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
     if !actual.eq_ignore_ascii_case(&update.sha256) { return Err("UPDATE_CHECKSUM_FAILED: Downloaded installer did not match the published SHA-256 checksum.".into()); }
     let installer = std::env::temp_dir().join(format!("honsen-pdf-translator-{}-setup.exe", update.version));
     fs::write(&installer, bytes).map_err(|error| format!("UPDATE_DOWNLOAD_FAILED: {error}"))?;
-    Command::new(&installer).args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/SP-"])
+    background_command(&installer).args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/SP-"])
         .spawn().map_err(|error| format!("UPDATE_INSTALL_FAILED: {error}"))?;
     app.exit(0);
     Ok(())
@@ -240,11 +247,11 @@ fn ocr_pdf_page(request: OcrPdfRequest) -> Result<OcrPdfResponse, String> {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_millis();
     let prefix = std::env::temp_dir().join(format!("honsen-ocr-{nonce}"));
     let image = prefix.with_extension("png");
-    let render = Command::new(pdftoppm_path()).args(["-f", &request.page_number.to_string(), "-l", &request.page_number.to_string(), "-r", "300", "-png", "-singlefile", source.to_string_lossy().as_ref(), prefix.to_string_lossy().as_ref()]).output()
+    let render = background_command(pdftoppm_path()).args(["-f", &request.page_number.to_string(), "-l", &request.page_number.to_string(), "-r", "300", "-png", "-singlefile", source.to_string_lossy().as_ref(), prefix.to_string_lossy().as_ref()]).output()
         .map_err(|_| "OCR_ENGINE_UNAVAILABLE: Poppler pdftoppm was not found.".to_owned())?;
     if !render.status.success() || !image.is_file() { return Err("OCR_RENDER_FAILED: Could not render the PDF page for OCR.".into()); }
     let language = tesseract_language(request.language.as_deref())?;
-    let mut command = Command::new(tesseract_path());
+    let mut command = background_command(tesseract_path());
     command.args([image.to_string_lossy().as_ref(), "stdout", "--psm", "3"]);
     if let Some(directory) = tessdata_dir() { command.args(["--tessdata-dir", directory.to_string_lossy().as_ref()]); }
     let result = command.args(["-l", &language, "-c", "tessedit_create_tsv=1"]).output()
@@ -360,7 +367,7 @@ fn export_docx_to_pdf(docx_bytes: Vec<u8>, output_path: String) -> Result<(), St
     let temporary_dir = temporary_docx.parent().ok_or("PDF_EXPORT_FAILED: temporary directory missing")?;
     let profile = libreoffice_profile_dir(nonce)?;
     let profile_arg = format!("-env:UserInstallation=file:///{}", profile.to_string_lossy().replace('\\', "/"));
-    let libreoffice_result = Command::new(libreoffice_path())
+    let libreoffice_result = background_command(libreoffice_path())
         .args(["--headless", &profile_arg, "--convert-to", "pdf", "--outdir", temporary_dir.to_str().ok_or("PDF_EXPORT_FAILED: invalid temporary path")?, temporary_docx.to_str().ok_or("PDF_EXPORT_FAILED: invalid temporary path")?])
         .status();
     let converted = libreoffice_result.is_ok_and(|status| status.success() && temporary_pdf.exists());
@@ -375,7 +382,7 @@ fn export_docx_to_pdf(docx_bytes: Vec<u8>, output_path: String) -> Result<(), St
 fn export_with_word(docx_path: &std::path::Path, pdf_path: &std::path::Path) -> Result<(), String> {
     let escape = |path: &std::path::Path| path.to_string_lossy().replace('\'', "''");
     let command = format!("$word = New-Object -ComObject Word.Application; $word.Visible = $false; try {{ $doc = $word.Documents.Open('{}', $false, $true); $doc.ExportAsFixedFormat('{}', 17); $doc.Close() }} finally {{ $word.Quit() }}", escape(docx_path), escape(pdf_path));
-    let status = Command::new("powershell.exe").args(["-NoProfile", "-Command", &command]).status().map_err(|error| format!("LIBREOFFICE_NOT_FOUND: {error}"))?;
+    let status = background_command("powershell.exe").args(["-NoProfile", "-Command", &command]).status().map_err(|error| format!("LIBREOFFICE_NOT_FOUND: {error}"))?;
     if status.success() && pdf_path.exists() { Ok(()) } else { Err("PDF_EXPORT_FAILED: LibreOffice and Word conversion both failed".into()) }
 }
 
