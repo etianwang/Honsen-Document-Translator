@@ -116,8 +116,12 @@ fn deepl_key(provided_key: Option<&str>) -> Result<String, String> {
 fn record_diagnostic(app: tauri::AppHandle, event: DiagnosticEvent) -> Result<(), String> {
     if !valid_diagnostic_event(&event) { return Err("DIAGNOSTIC_INVALID_EVENT: Unsupported diagnostic event.".into()); }
     let directory = app.path().app_log_dir().map_err(|_| "DIAGNOSTIC_UNAVAILABLE: Could not open the diagnostics directory.".to_owned())?;
-    fs::create_dir_all(&directory).map_err(|_| "DIAGNOSTIC_UNAVAILABLE: Could not open the diagnostics directory.".to_owned())?;
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| "DIAGNOSTIC_UNAVAILABLE: Could not create a diagnostic timestamp.".to_owned())?.as_secs();
+    append_diagnostic(&directory, &event, timestamp)
+}
+
+fn append_diagnostic(directory: &std::path::Path, event: &DiagnosticEvent, timestamp: u64) -> Result<(), String> {
+    fs::create_dir_all(directory).map_err(|_| "DIAGNOSTIC_UNAVAILABLE: Could not open the diagnostics directory.".to_owned())?;
     let line = serde_json::json!({ "timestamp": timestamp, "stage": event.stage, "code": event.code, "pageNumber": event.page_number });
     let mut output = fs::OpenOptions::new().create(true).append(true).open(directory.join("diagnostics.jsonl"))
         .map_err(|_| "DIAGNOSTIC_UNAVAILABLE: Could not write diagnostics.".to_owned())?;
@@ -418,6 +422,16 @@ mod tests {
         assert!(valid_diagnostic_event(&DiagnosticEvent { stage: "translation".into(), code: "DEEPL_AUTH_FAILED".into(), page_number: Some(3) }));
         assert!(!valid_diagnostic_event(&DiagnosticEvent { stage: "translation".into(), code: "C:\\secret.pdf".into(), page_number: None }));
         assert!(!valid_diagnostic_event(&DiagnosticEvent { stage: "unknown".into(), code: "OCR_FAILED".into(), page_number: None }));
+    }
+
+    #[test]
+    fn writes_only_structured_diagnostic_fields() {
+        let directory = std::env::temp_dir().join(format!("honsen-diagnostic-test-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let event = DiagnosticEvent { stage: "ocr".into(), code: "OCR_FAILED".into(), page_number: Some(2) };
+        append_diagnostic(&directory, &event, 123).unwrap();
+        let line = fs::read_to_string(directory.join("diagnostics.jsonl")).unwrap();
+        assert_eq!(line.trim(), r#"{"code":"OCR_FAILED","pageNumber":2,"stage":"ocr","timestamp":123}"#);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
