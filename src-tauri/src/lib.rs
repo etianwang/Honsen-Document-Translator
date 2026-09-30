@@ -1,6 +1,7 @@
-use std::{fs, path::PathBuf, process::Command, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{fs, io::Write, path::PathBuf, process::Command, time::{Duration, SystemTime, UNIX_EPOCH}};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tauri::Manager;
 
 const DEEPL_FREE_ENDPOINT: &str = "https://api-free.deepl.com/v2/translate";
 const DEEPL_PRO_ENDPOINT: &str = "https://api.deepl.com/v2/translate";
@@ -76,6 +77,10 @@ struct OcrText {
 struct OcrBox { x: f32, y: f32, width: f32, height: f32 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosticEvent { stage: String, code: String, page_number: Option<u32> }
+
+#[derive(Deserialize)]
 struct GithubRelease { tag_name: String, draft: bool, prerelease: bool, body: Option<String>, assets: Vec<GithubAsset> }
 
 #[derive(Deserialize)]
@@ -105,6 +110,24 @@ fn deepl_key(provided_key: Option<&str>) -> Result<String, String> {
         .iter()
         .find_map(|name| std::env::var(name).ok().filter(|value| !value.trim().is_empty()))
         .ok_or_else(|| "DEEPL_NOT_CONFIGURED: Set DEEPL_API_KEY in the local .env file.".to_owned())
+}
+
+#[tauri::command]
+fn record_diagnostic(app: tauri::AppHandle, event: DiagnosticEvent) -> Result<(), String> {
+    if !valid_diagnostic_event(&event) { return Err("DIAGNOSTIC_INVALID_EVENT: Unsupported diagnostic event.".into()); }
+    let directory = app.path().app_log_dir().map_err(|_| "DIAGNOSTIC_UNAVAILABLE: Could not open the diagnostics directory.".to_owned())?;
+    fs::create_dir_all(&directory).map_err(|_| "DIAGNOSTIC_UNAVAILABLE: Could not open the diagnostics directory.".to_owned())?;
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| "DIAGNOSTIC_UNAVAILABLE: Could not create a diagnostic timestamp.".to_owned())?.as_secs();
+    let line = serde_json::json!({ "timestamp": timestamp, "stage": event.stage, "code": event.code, "pageNumber": event.page_number });
+    let mut output = fs::OpenOptions::new().create(true).append(true).open(directory.join("diagnostics.jsonl"))
+        .map_err(|_| "DIAGNOSTIC_UNAVAILABLE: Could not write diagnostics.".to_owned())?;
+    writeln!(output, "{line}").map_err(|_| "DIAGNOSTIC_UNAVAILABLE: Could not write diagnostics.".to_owned())
+}
+
+fn valid_diagnostic_event(event: &DiagnosticEvent) -> bool {
+    matches!(event.stage.as_str(), "import" | "ocr" | "translation" | "docx-export" | "pdf-export" | "update" | "glossary" | "credential")
+        && event.code.len() <= 64 && event.code.bytes().all(|byte| byte.is_ascii_uppercase() || byte == b'_')
+        && event.page_number.is_none_or(|page| (1..=100_000).contains(&page))
 }
 
 #[tauri::command]
@@ -351,7 +374,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update])
+        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update, record_diagnostic])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -388,6 +411,13 @@ mod tests {
         assert_eq!(result.text[0].text, "Hello");
         assert_eq!(result.text[0].bbox.x, 60.0);
         assert_eq!(result.text[0].bbox.y, 780.0);
+    }
+
+    #[test]
+    fn accepts_only_redacted_diagnostic_fields() {
+        assert!(valid_diagnostic_event(&DiagnosticEvent { stage: "translation".into(), code: "DEEPL_AUTH_FAILED".into(), page_number: Some(3) }));
+        assert!(!valid_diagnostic_event(&DiagnosticEvent { stage: "translation".into(), code: "C:\\secret.pdf".into(), page_number: None }));
+        assert!(!valid_diagnostic_event(&DiagnosticEvent { stage: "unknown".into(), code: "OCR_FAILED".into(), page_number: None }));
     }
 
     #[test]

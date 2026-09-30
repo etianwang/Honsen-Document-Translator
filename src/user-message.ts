@@ -23,3 +23,8 @@ export function userMessage(error: unknown, fallback: string): string {
   const code = message.split(":", 1)[0];
   return messages[code] ?? (message && !message.includes(":") && /[\u4e00-\u9fff]/.test(message) ? message : fallback);
 }
+
+export function diagnosticCode(error: unknown): string {
+  const code = error instanceof Error ? error.message.split(":", 1)[0] : "";
+  return /^[A-Z_]{1,64}$/.test(code) ? code : "UNKNOWN_ERROR";
+}
