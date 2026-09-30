@@ -12,7 +12,9 @@ export async function exportTranslatedPdf(source: Uint8Array, model: DocumentMod
     const context = canvas.getContext("2d");
     if (!context) throw new Error("PDF_EXPORT_FAILED: canvas renderer is unavailable.");
     if (usedFallback) for (const region of translatedCellRegions(pageModel)) maskRegion(context, region, pageModel.height);
-    for (const placement of translatedPlacements(pageModel)) paintTranslatedPlacement(context, placement, pageModel.height, usedFallback);
+    // PDF.js may report a clean background even when text is painted inside a form/annotation.
+    // Always clear the translated bbox so the export cannot overlay surviving source glyphs.
+    for (const placement of translatedPlacements(pageModel)) paintTranslatedPlacement(context, placement, pageModel.height, true);
     const page = pdf.addPage([pageModel.width, pageModel.height]);
     page.drawImage(await pdf.embedPng(dataUrlBytes(canvas.toDataURL("image/png"))), { x: 0, y: 0, width: pageModel.width, height: pageModel.height });
   }
