@@ -14,6 +14,7 @@ import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
 import { TauriOcrProvider } from "./tauri-ocr-provider";
 import { applyGlossary, type GlossaryEntry, parseGlossaryYaml } from "./glossary";
+import { userMessage } from "./user-message";
 import { canExport, canTranslate, isWorkflowBusy, recoverAfterCancel, restoreSourceReview, type WorkflowPhase } from "./workflow-state";
 import appLogo from "../logo.png";
 import sponsorWechat from "./assets/sponsor-wechat.jpg";
@@ -78,7 +79,7 @@ function App() {
     try {
       const status = await invoke<UpdateStatus>("check_for_update");
       setUpdateStatus(status); setMessage(status.available ? `发现 v${status.version} 更新。` : `当前已是最新版本 v${status.currentVersion}。`); if (autoInstall && status.available) await installUpdate(status);
-    } catch (error: unknown) { setMessage(error instanceof Error ? error.message : "检查更新失败，请稍后重试。"); }
+    } catch (error: unknown) { setMessage(userMessage(error, "检查更新失败，请稍后重试。")); }
     finally { setCheckingUpdate(false); }
   }
 
@@ -86,7 +87,7 @@ function App() {
     if (!status?.available) return;
     setInstallingUpdate(true); setMessage(`正在下载 v${status.version} 并校验安装包…`);
     try { await invoke("install_update"); }
-    catch (error: unknown) { setInstallingUpdate(false); setMessage(error instanceof Error ? error.message : "更新安装失败，请稍后重试。"); }
+    catch (error: unknown) { setInstallingUpdate(false); setMessage(userMessage(error, "更新安装失败，请稍后重试。")); }
   }
 
   async function selectPdf(): Promise<void> {
@@ -111,7 +112,7 @@ function App() {
       setMessage(`已导入 ${pages.length} 页，请确认原文后点击开始翻译。`);
     } catch (error: unknown) {
       if (error instanceof DOMException && error.name === "AbortError") { setStage("idle"); setPhase("empty"); setMessage("已取消导入和 OCR。"); }
-      else { setStage("failed"); setPhase("empty"); setMessage(error instanceof Error ? error.message : "PDF parsing failed."); }
+      else { setStage("failed"); setPhase("empty"); setMessage(userMessage(error, "PDF 导入失败，请尝试其他文件。")); }
     } finally { activeAbortController.current = undefined; }
   }
 
@@ -125,7 +126,7 @@ function App() {
       await writeFile(path, await docxBytes());
       setStage("completed"); setPhase("review-translation"); setMessage("DOCX exported.");
     } catch (error: unknown) {
-      setStage("failed"); setPhase("review-translation"); setMessage(error instanceof Error ? error.message : "DOCX generation failed.");
+      setStage("failed"); setPhase("review-translation"); setMessage(userMessage(error, "DOCX 导出失败，请重试。"));
     }
   }
 
@@ -141,7 +142,7 @@ function App() {
       setStage("completed"); setPhase("review-translation"); setMessage("DeepL translation completed.");
     } catch (error: unknown) {
       if (error instanceof DOMException && error.name === "AbortError") { setStage("idle"); setPhase(recoverAfterCancel("translating")); setMessage("已取消翻译。"); }
-      else { setStage("failed"); setPhase("review-source"); setMessage(error instanceof Error ? error.message : "Translation failed."); }
+      else { setStage("failed"); setPhase("review-source"); setMessage(userMessage(error, "翻译失败，请稍后重试。")); }
     } finally { activeAbortController.current = undefined; }
   }
 
@@ -152,14 +153,14 @@ function App() {
     try {
       const entries = parseGlossaryYaml(new TextDecoder().decode(await readFile(path)));
       setGlossaryEntries(entries); setGlossaryName(path.split(/[\\/]/).pop()); setMessage(`已加载 ${entries.length} 条术语。`);
-    } catch (error: unknown) { setMessage(error instanceof Error ? error.message : "术语表读取失败。"); }
+    } catch (error: unknown) { setMessage(userMessage(error, "术语表读取失败。")); }
   }
 
   async function saveKey(): Promise<void> {
     if (!isTauri) return;
     if (!apiKey.trim() || !rememberKey) return;
     try { setKeyStatus(await invoke<DeepLKeyStatus>("save_deepl_api_key", { request: { apiKey, remember: true } })); setMessage("DeepL API Key 已保存到安全存储。"); }
-    catch (error: unknown) { setMessage(error instanceof Error ? error.message : "保存 API Key 失败。"); }
+    catch (error: unknown) { setMessage(userMessage(error, "保存 API Key 失败。")); }
   }
 
   async function exportPdf(): Promise<void> {
@@ -173,7 +174,7 @@ function App() {
       await writeFile(path, await exportTranslatedPdf(sourceBytes, model, ocrPages));
       setStage("completed"); setPhase("review-translation"); setMessage("PDF exported.");
     } catch (error: unknown) {
-      setStage("failed"); setPhase("review-translation"); setMessage(error instanceof Error ? error.message : "PDF export failed.");
+      setStage("failed"); setPhase("review-translation"); setMessage(userMessage(error, "PDF 导出失败，请重试。"));
     }
   }
 
