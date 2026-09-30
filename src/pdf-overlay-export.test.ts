@@ -17,5 +17,7 @@ describe("translatedLines", () => {
     expect(translatedLineText(line)).toBe("译文");
     paintTranslatedPlacement(context, { id: line.id, lineId: line.id, bbox: line.bbox, text: "译文", fontSize: 10 }, 100);
     expect(fillRect).toHaveBeenCalledBefore(fillText);
+    expect(fillText.mock.calls[0]?.[2]).toBeGreaterThan(320);
+    expect(fillText.mock.calls[0]?.[2]).toBeLessThan(360);
   });
 });

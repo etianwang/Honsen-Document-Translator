@@ -59,11 +59,13 @@ export function paintTranslatedPlacement(context: CanvasRenderingContext2D, plac
   if (clearSourceText) { context.fillStyle = "#fff"; context.fillRect(x - padding, y - height - padding, width + padding * 2, height + padding * 2); }
   if (!text.trim()) return;
   const sourceSize = placement.fontSize * scale;
+  const innerHeight = Math.max(1, height - padding * 2);
   context.font = `${sourceSize}px Arial, "Microsoft YaHei", sans-serif`;
-  const fontSize = Math.max(1.5 * scale, Math.min(sourceSize, height * 0.9, width / context.measureText(text).width * sourceSize));
+  const fontSize = Math.max(1.5 * scale, Math.min(sourceSize, innerHeight / 1.15, width / context.measureText(text).width * sourceSize));
   context.font = `${fontSize}px Arial, "Microsoft YaHei", sans-serif`;
+  const baseline = y - height + padding + (innerHeight - fontSize) / 2 + fontSize * 0.8;
   context.fillStyle = "#000"; context.textBaseline = "alphabetic"; context.direction = placement.direction === "rtl" ? "rtl" : "ltr"; context.textAlign = placement.direction === "rtl" ? "right" : "left";
-  context.fillText(text, placement.direction === "rtl" ? x + width - padding : x + padding, y - Math.max(0, height - fontSize) / 2, Math.max(1, width - padding * 2));
+  context.fillText(text, placement.direction === "rtl" ? x + width - padding : x + padding, baseline, Math.max(1, width - padding * 2));
 }
 
 function maskRegion(context: CanvasRenderingContext2D, bbox: BoundingBox, pageHeight: number): void {
