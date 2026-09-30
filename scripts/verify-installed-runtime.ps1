@@ -12,6 +12,13 @@ $docx = Join-Path ([System.IO.Path]::GetTempPath()) "honsen-export-proof-$PID.do
 $pdf = [System.IO.Path]::ChangeExtension($docx, 'pdf')
 $profile = Join-Path ([System.IO.Path]::GetTempPath()) "honsen-libreoffice-check-$PID"
 
+function Stop-TestLibreOffice([string]$InstallRoot) {
+  $expected = Join-Path $InstallRoot 'resources\libreoffice\program\soffice.exe'
+  $processes = @(Get-CimInstance Win32_Process -Filter "Name='soffice.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and $_.ExecutablePath -ieq $expected })
+  foreach ($process in $processes) { Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue }
+  foreach ($process in $processes) { Wait-Process -Id $process.ProcessId -ErrorAction SilentlyContinue }
+}
+
 try {
   $install = Start-Process -FilePath $installerPath -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$installRoot`"") -Wait -PassThru
   if ($install.ExitCode -ne 0) { throw "Installer exited with code $($install.ExitCode)." }
@@ -32,14 +39,16 @@ try {
   & node (Join-Path $PSScriptRoot 'create-export-fixture.mjs') $docx
   if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $docx)) { throw 'Could not create the DOCX export fixture.' }
   $profileArg = "-env:UserInstallation=file:///$($profile.Replace('\\', '/'))"
-  $conversion = Start-Process -FilePath $soffice -ArgumentList @('--headless', $profileArg, '--convert-to', 'pdf', '--outdir', ([System.IO.Path]::GetTempPath()), $docx) -PassThru
-  try { Wait-Process -Id $conversion.Id -Timeout 60 -ErrorAction Stop } catch { if (-not (Test-Path -LiteralPath $pdf)) { throw 'Bundled LibreOffice did not finish the DOCX export fixture.' } }
-  if (Get-Process -Id $conversion.Id -ErrorAction SilentlyContinue) { Stop-Process -Id $conversion.Id -Force; Wait-Process -Id $conversion.Id -ErrorAction SilentlyContinue }
+  Start-Process -FilePath $soffice -ArgumentList @('--headless', $profileArg, '--convert-to', 'pdf', '--outdir', ([System.IO.Path]::GetTempPath()), $docx) | Out-Null
+  $deadline = (Get-Date).AddSeconds(60)
+  while (-not (Test-Path -LiteralPath $pdf) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+  Stop-TestLibreOffice $installRoot
   if (-not (Test-Path -LiteralPath $pdf) -or (Get-Item -LiteralPath $pdf).Length -eq 0) { throw 'Bundled LibreOffice could not export the DOCX fixture.' }
 
   Write-Host 'Installed-runtime verification passed: Inno install, bundled Poppler/Tesseract OCR, bundled LibreOffice PDF export, and uninstall.'
 }
 finally {
+  Stop-TestLibreOffice $installRoot
   $image = "$imagePrefix.png"
   if (Test-Path -LiteralPath $image) { Remove-Item -LiteralPath $image -Force }
   foreach ($path in @($docx, $pdf)) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
