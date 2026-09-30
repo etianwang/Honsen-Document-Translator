@@ -11,7 +11,7 @@
 
 ## 已验证的安装包事实
 
-- 本地 v1.0.0 候选安装包 SHA-256：`102b4af4483034bf350533f7d6b59a6fc59b933a6f80767da88b2b5b17ea89ba`。
+- v1.0.1 安装包 SHA-256：`a26888adff2addf681d561c7decef78483277f4527e8e4a42468d76664b67940`。
 - `Get-AuthenticodeSignature` 返回 `NotSigned`；当前版本按内部使用发布，Windows 可能显示未知发布者或 SmartScreen 提示。
 - `src-tauri/resources/bin/poppler` 与 `src-tauri/resources/bin/tesseract` 中未找到许可证、NOTICE、COPYING、README 或 AUTHORS 文件。
 
