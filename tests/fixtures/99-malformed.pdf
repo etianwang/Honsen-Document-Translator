@@ -1,0 +1,5 @@
+%PDF-1.7
+% This deliberately has a PDF header but no trailer, cross-reference table, or page tree.
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj

@@ -25,6 +25,11 @@ describe("parsePdf", () => {
     await expect(parsePdf(new TextEncoder().encode("not a PDF"), "wrong.pdf")).rejects.toThrow("INVALID_PDF");
   });
 
+  it("normalizes a malformed PDF after it passes the header check", async () => {
+    const fixture = await readFile(new URL("../../../tests/fixtures/99-malformed.pdf", import.meta.url));
+    await expect(parsePdf(new Uint8Array(fixture), "damaged.pdf")).rejects.toThrow("PDF_PARSE_FAILED");
+  });
+
   it("normalizes encrypted document errors without exposing parser internals", () => {
     const error = new Error("No password given"); error.name = "PasswordException";
     expect(normalizePdfError(error).message).toBe("ENCRYPTED_PDF: This PDF is password protected.");
