@@ -19,6 +19,16 @@ function Stop-TestLibreOffice([string]$InstallRoot) {
   foreach ($process in $processes) { Wait-Process -Id $process.ProcessId -ErrorAction SilentlyContinue }
 }
 
+function Remove-TestInstallRoot([string]$InstallRoot) {
+  if (-not (Test-Path -LiteralPath $InstallRoot)) { return }
+  $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+  $target = [System.IO.Path]::GetFullPath($InstallRoot)
+  if (-not $target.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $target) -notmatch '^honsen-installer-check-\d+$') {
+    throw "Refusing to remove an unexpected verification directory: $target"
+  }
+  Remove-Item -LiteralPath $target -Recurse -Force
+}
+
 try {
   $install = Start-Process -FilePath $installerPath -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$installRoot`"") -Wait -PassThru
   if ($install.ExitCode -ne 0) { throw "Installer exited with code $($install.ExitCode)." }
@@ -39,7 +49,8 @@ try {
   & node (Join-Path $PSScriptRoot 'create-export-fixture.mjs') $docx
   if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $docx)) { throw 'Could not create the DOCX export fixture.' }
   $profileArg = "-env:UserInstallation=file:///$($profile.Replace('\\', '/'))"
-  Start-Process -FilePath $soffice -ArgumentList @('--headless', $profileArg, '--convert-to', 'pdf', '--outdir', ([System.IO.Path]::GetTempPath()), $docx) | Out-Null
+  & $soffice '--headless' $profileArg '--convert-to' 'pdf' '--outdir' ([System.IO.Path]::GetTempPath()) $docx
+  if ($LASTEXITCODE -ne 0) { throw 'Bundled LibreOffice did not start the DOCX export fixture.' }
   $deadline = (Get-Date).AddSeconds(60)
   while (-not (Test-Path -LiteralPath $pdf) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
   Stop-TestLibreOffice $installRoot
@@ -58,5 +69,6 @@ finally {
     $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
     if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with code $($uninstall.ExitCode)." }
   }
+  Remove-TestInstallRoot $installRoot
   if (Test-Path -LiteralPath $installRoot) { throw "Installer cleanup failed: $installRoot" }
 }
