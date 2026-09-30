@@ -1,6 +1,6 @@
 # Production Audit
 
-Audited: 2026-09-26. This is an MVP codebase, not production ready.
+Audited: 2026-09-30. The public v1.0.0 is an unsigned beta, not a production-ready release.
 
 | Area | Status | Current implementation | Production risk | Required change | Priority |
 | --- | --- | --- | --- | --- | --- |
@@ -11,8 +11,8 @@ Audited: 2026-09-26. This is an MVP codebase, not production ready.
 | Font Resolver | MISSING | raw font hint only | missing glyphs and incorrect styles | resolver and fallback policy | P1 |
 | DOCX Engine | PARTIAL | paragraphs, tables, RGB images, headers/footer/page numbers; validates mandatory OOXML parts/relationships before export | no office-level fidelity validation or section fidelity | rendered fidelity and package relationship coverage | P0 |
 | Translation | PARTIAL | backend-only DeepL command, 50-segment limit, timeout and retry | no translation memory, glossary or user-configurable language | local TM, glossary and settings | P0 |
-| OCR | PARTIAL | offline Poppler + Tesseract path only for scanned pages; bundled `tessdata_fast` includes 21 languages + OSD; TSV coordinates map back to PDF points; RTL direction support; hybrid-page graphics are left unchanged | Poppler/Tesseract executables are development-machine dependencies; uncommon graphics and mixed RTL/LTR pages lack visual fixtures | bundle executables, preprocessing, visual fidelity and RTL fixtures | P0 |
-| PDF Export | PARTIAL | portable build bundles a full LibreOffice runtime and prefers its headless `soffice.exe`; Word is development fallback | no clean-machine installation or visual-fidelity validation | clean-machine export and visual fixtures | P0 |
+| OCR | PARTIAL | offline Poppler + Tesseract is bundled with 21 `tessdata_fast` packs plus OSD; TSV coordinates map back to PDF points; RTL direction support; hybrid-page graphics are left unchanged | installed artifact and clean-machine evidence, redistribution notices, and real scanned-layout fixtures are still missing | run installed-runtime verification, then clean-VM and visual-fidelity checks | P0 |
+| PDF Export | PARTIAL | portable build bundles a full LibreOffice runtime and prefers its headless `soffice.exe`; Word is development fallback | no clean-machine conversion or visual-fidelity validation | installed-artifact, clean-machine export and visual fixtures | P0 |
 | Frontend | PARTIAL | open, translate, preview, export controls；导入与翻译状态已分离 | 无设置页、拖放、可定位 Issues 与端到端 GUI 回归 | 完成状态驱动 UI 与桌面测试 | P1 |
 | Tauri / Filesystem | PARTIAL | dialog-mediated read/write permissions are explicit; no broad static filesystem scope | no project workspace or persistence boundary | explicit project workspace commands | P0 |
 | State / persistence | NOT IMPLEMENTED | 项目保存与恢复功能已移除，避免在主界面增加非核心操作 | no project workspace or autosave | 仅在用户再次需要时实现项目工作区 | P1 |
@@ -24,4 +24,4 @@ Audited: 2026-09-26. This is an MVP codebase, not production ready.
 
 ## P0 conclusion
 
-The application is **NOT PRODUCTION READY**. Backend-only DeepL credentials and dialog-mediated filesystem permissions are implemented and unit-tested, but absent OCR, persistence, unified pipeline, and reliable DOCX/PDF validation still block a release.
+The application is **NOT PRODUCTION READY**. OCR and portable LibreOffice resources are now bundled, but clean-machine validation, real end-to-end fixtures, visual DOCX/PDF acceptance, recovery fixtures, redistribution notices, and redacted diagnostic logging still block a production release.

@@ -31,10 +31,10 @@
 
 | 状态 | 优先级 | 任务 | 完成标准 |
 | --- | --- | --- | --- |
-| [ ] | P0 | 干净环境验证 OCR 执行引擎 | 在无 Tesseract/Poppler 的干净 Windows 虚拟机安装正式包，扫描 PDF OCR 成功；同时完成可再分发许可证核验 |
+| [ ] | P0 | 干净环境验证 OCR 执行引擎 | 先运行 `pnpm verify:installed-runtime`，验证 Inno 正式安装包内置 Poppler/Tesseract 可完成 OCR 且卸载清理；随后在无 Tesseract/Poppler 的干净 Windows 虚拟机复验，并完成可再分发许可证核验 |
 | [ ] | P0 | 端到端翻译验收 | 导入真实文字 PDF、扫描 PDF、混合 PDF，完成 DeepL 翻译并导出 DOCX/PDF；每一步有可理解错误提示 |
 | [ ] | P0 | DOCX/PDF 保真验证 | 使用 Word/LibreOffice 打开导出文件，针对文字、表格、图片、页眉页脚、RTL 建立视觉基准样本 |
-| [ ] | P0 | 便携安装包验收 | 在没有 Microsoft Office、没有 LibreOffice 的干净 Windows 虚拟机安装 NSIS/MSI，验证内置 LibreOffice 可导出 PDF，并核验卸载清理与许可证展示 |
+| [ ] | P0 | 便携安装包验收 | 先运行 `pnpm verify:installed-runtime`，验证 Inno 安装包含内置 LibreOffice、可安装并卸载；随后在没有 Microsoft Office、没有 LibreOffice 的干净 Windows 虚拟机验证内置 LibreOffice 导出 PDF，并核验许可证展示 |
 | [ ] | P0 | PDF 异常与恢复 | 已覆盖非 PDF、加密、全局解析错误及按页恢复记录，并在界面显示页码问题；尚缺真实损坏/复杂 PDF 样本与更细的对象降级策略 |
 | [ ] | P1 | 后台任务与自动保存 | 翻译和 OCR 均可取消；仅在确认需要项目工作区时再增加后台任务与自动保存。 |
 | [ ] | P0 | 安全与隐私发布审计 | 已完成密钥扫描、依赖检查和隐私说明；尚缺第三方许可证审计、正式发行包扫描与结构化脱敏日志验证 |
