@@ -3,6 +3,7 @@
 > 发布规则：任何标为 **P0** 且未勾选的任务都会阻止正式上线。只有“已完成”且“验证”栏有通过记录的任务才打勾。
 
 干净虚拟机的人工验收步骤与证据要求见 [CLEAN_VM_ACCEPTANCE.md](CLEAN_VM_ACCEPTANCE.md)。
+第三方运行库与签名审计证据见 [THIRD_PARTY_AUDIT.md](THIRD_PARTY_AUDIT.md)。
 
 ## 已完成并验证
 
