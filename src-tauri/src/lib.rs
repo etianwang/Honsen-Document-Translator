@@ -417,7 +417,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires local Poppler and Tesseract installation"]
     fn runs_the_local_ocr_engine_for_an_image_pdf() {
         let source = std::env::current_dir().unwrap().join("../tests/fixtures/04-image.pdf").canonicalize().unwrap();
         let result = ocr_pdf_page(OcrPdfRequest { source_path: source.to_string_lossy().into_owned(), page_number: 1, page_width: 612.0, page_height: 792.0, language: Some("EN".into()) }).unwrap();

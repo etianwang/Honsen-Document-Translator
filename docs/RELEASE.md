@@ -1,14 +1,14 @@
 # Release
 
-Current status: **NOT PRODUCTION READY**. Debug installers are unsigned development artifacts only.
+Current status: **v1.0.0 is an unsigned public beta, not a production-ready release**.
 
-For a public Windows release, set a SemVer version, application publisher, icon, and installer configuration; sign the resulting installer with the organization certificate; verify clean install, upgrade, uninstall, PDF export, and absence of secrets before publication. Telemetry is disabled by design.
+Before the next stable Windows release, set a SemVer version, application publisher, icon, and installer configuration; sign the resulting installer with the organization certificate; verify clean install, upgrade, uninstall, PDF export, and absence of secrets before publication. Telemetry is disabled by design.
 
 ## Windows installer and automatic updates
 
-Run `pnpm release:inno` to build the Tauri release binary, then create `Honsen-PDF-Translator-Setup.exe` with Inno Setup and its adjacent `SHA256SUMS.json`. Upload exactly those two files to a non-draft GitHub Release whose tag is the release version, for example `v0.1.1`.
+Run `pnpm release:inno` to build the Tauri release binary, then create `Honsen-PDF-Translator-Setup.exe` with Inno Setup and its adjacent `SHA256SUMS.json`. Run `pnpm verify:installed-runtime` against that installer before upload. Upload exactly those two files to a non-draft GitHub Release whose tag is the release version, for example `v1.0.1`.
 
-Installed release builds check `etianwang/Honsen-PDF-Translator` on startup. A newer non-prerelease version is downloaded only when its published SHA-256 matches, then started with Inno Setup's silent switches. The installer always writes the stable `HonsenPdfTranslator.exe` name, explicitly deletes only the two named historical product executables, and creates only its own `Honsen PDF Translator` Start Menu/Desktop shortcuts. It never scans or changes unrelated shortcuts.
+Installed release builds check `etianwang/Honsen-PDF-Translator` on startup. A newer non-prerelease version is downloaded only when its published SHA-256 matches, then started with Inno Setup's silent switches. The installer always writes the stable `HonsenPdfTranslator.exe` name, explicitly deletes only the two named historical product executables, and creates only its own `Honsen PDF 翻译器` Start Menu/Desktop shortcuts. It never scans or changes unrelated shortcuts.
 
 ## Binary distribution
 
