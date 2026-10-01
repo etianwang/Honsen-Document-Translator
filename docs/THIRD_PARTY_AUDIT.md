@@ -11,6 +11,7 @@
 
 ## 已验证的安装包事实
 
+- v1.0.2 安装包 SHA-256：`6d3a39ecc599aa6df13b4bc2c1647440a092579c0707cc1f0a51320d13c2b025`；已通过 Inno 安装、内置 Poppler/Tesseract OCR、内置 LibreOffice PDF 导出与卸载验收。
 - v1.0.1 安装包 SHA-256：`a26888adff2addf681d561c7decef78483277f4527e8e4a42468d76664b67940`。
 - `Get-AuthenticodeSignature` 返回 `NotSigned`；当前版本按内部使用发布，Windows 可能显示未知发布者或 SmartScreen 提示。
 - `src-tauri/resources/bin/poppler` 与 `src-tauri/resources/bin/tesseract` 中未找到许可证、NOTICE、COPYING、README 或 AUTHORS 文件。
