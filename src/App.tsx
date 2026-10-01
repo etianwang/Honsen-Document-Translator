@@ -9,7 +9,7 @@ import type { DocumentModel, DocumentPage, ParagraphModel, ProcessingStage } fro
 import { translateDocument } from "@pdf-translator/translation-engine";
 import { DocumentPipeline } from "@pdf-translator/document-pipeline";
 import { configurePdfWorker, renderCleanBackgroundPages, renderPdfPages } from "@pdf-translator/pdf-parser";
-import { exportTranslatedPdf, translatedCellRegions, translatedPlacements } from "./pdf-overlay-export";
+import { exportTranslatedPdf, translatedPlacements } from "./pdf-overlay-export";
 import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
 import { TauriOcrProvider } from "./tauri-ocr-provider";
@@ -167,7 +167,7 @@ function App() {
     try {
       setStage("generating-pdf"); setPhase("exporting-pdf"); setMessage("Generating PDF...");
       if (!sourceBytes) throw new Error("PDF_EXPORT_FAILED: 原始 PDF 数据不可用，请重新导入文件。");
-      await writeFile(path, await exportTranslatedPdf(sourceBytes, model, ocrPages));
+      await writeFile(path, await exportTranslatedPdf(sourceBytes, model));
       setStage("completed"); setPhase("review-translation"); setMessage("PDF exported.");
     } catch (error: unknown) {
       recordDiagnostic("pdf-export", error); setStage("failed"); setPhase("review-translation"); setMessage(userMessage(error, "PDF 导出失败，请重试。"));
@@ -291,10 +291,9 @@ function TranslatedDocumentPreview({ sourceBytes, pages, maskedPages, onLineChan
 
 function TranslatedPage({ page, useWhiteMask, canvasRef, onLineChange }: { page: DocumentPage; useWhiteMask: boolean; canvasRef: (canvas: HTMLCanvasElement | null) => void; onLineChange: (lineId: string, translatedText: string) => void }) {
   const placements = translatedPlacements(page);
-  const cellRegions = translatedCellRegions(page);
   return <div className="translated-page" style={{ aspectRatio: `${page.width} / ${page.height}` }} aria-label={`第 ${page.number} 页译文，保留原始图片与版式`}>
     <canvas ref={canvasRef} aria-hidden="true" />
-    {useWhiteMask && cellRegions.map((region, index) => <span key={`mask-${index}`} className="translated-cell-mask" aria-hidden="true" style={{ left: `${(region.x + 1) / page.width * 100}%`, top: `${(page.height - region.y - region.height + 1) / page.height * 100}%`, width: `${Math.max(0, region.width - 2) / page.width * 100}%`, height: `${Math.max(0, region.height - 2) / page.height * 100}%` }} />)}
+    {useWhiteMask && placements.map((placement, index) => <span key={`mask-${placement.id}-${index}`} className="translated-text-mask" aria-hidden="true" style={{ left: `${placement.bbox.x / page.width * 100}%`, top: `${(page.height - placement.bbox.y - placement.bbox.height) / page.height * 100}%`, width: `${placement.bbox.width / page.width * 100}%`, height: `${placement.bbox.height / page.height * 100}%` }} />)}
     {placements.map((placement, index) => {
       const units = [...placement.text].reduce((total, character) => total + (character.charCodeAt(0) > 255 ? 1 : 0.55), 0.55);
       const fontSize = Math.max(0.35, Math.min(placement.fontSize / page.width * 100, placement.bbox.height / page.width * 100 / 1.15, placement.bbox.width / page.width * 100 / units));

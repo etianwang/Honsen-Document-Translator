@@ -4,14 +4,13 @@ import { renderCleanBackgroundPage } from "@pdf-translator/pdf-parser";
 
 const renderScale = 4;
 
-export async function exportTranslatedPdf(source: Uint8Array, model: DocumentModel, maskedPages: ReadonlySet<number> = new Set()): Promise<Uint8Array> {
+export async function exportTranslatedPdf(source: Uint8Array, model: DocumentModel): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   for (const pageModel of model.pages) {
     const canvas = document.createElement("canvas");
-    const usedFallback = (await renderCleanBackgroundPage(source.slice(), pageModel.number, canvas, undefined, renderScale)) || maskedPages.has(pageModel.number);
+    await renderCleanBackgroundPage(source.slice(), pageModel.number, canvas, undefined, renderScale);
     const context = canvas.getContext("2d");
     if (!context) throw new Error("PDF_EXPORT_FAILED: canvas renderer is unavailable.");
-    if (usedFallback) for (const region of translatedCellRegions(pageModel)) maskRegion(context, region, pageModel.height);
     // PDF.js may report a clean background even when text is painted inside a form/annotation.
     // Always clear the translated bbox so the export cannot overlay surviving source glyphs.
     for (const placement of translatedPlacements(pageModel)) paintTranslatedPlacement(context, placement, pageModel.height, true);
@@ -35,15 +34,10 @@ export function translatedLineText(line: TextLine): string | undefined {
 
 export interface TranslatedPlacement { id: string; lineId: string; bbox: BoundingBox; text: string; direction?: TextDirection; fontSize: number; color?: string; bold?: boolean; italic?: boolean; }
 
-export function translatedCellRegions(page: DocumentModel["pages"][number]): BoundingBox[] {
-  return page.blocks.flatMap((block) => block.type === "table"
-    ? block.rows.flatMap((row) => row.cells).filter((cell) => cell.content.some((paragraph) => paragraph.lines.some((line) => line.runs.some((run) => run.translatedText !== undefined)))).map((cell) => cell.bbox)
-    : []);
-}
-
 export function translatedPlacements(page: DocumentModel["pages"][number]): TranslatedPlacement[] {
   return translatedLines(page).flatMap((line) => {
     const text = translatedLineText(line) ?? line.runs.map((run) => run.text).join("");
+    if (!text.trim()) return [];
     const split = line.runs.slice(1).some((run) => Boolean(run.translatedText));
     if (split) return line.runs.filter((run) => run.translatedText !== undefined).map((run) => placementForRun(run, run.id, run.id, run.bbox, run.translatedText ?? "", line.direction));
     const source = line.runs.reduce((largest, run) => (run.style.fontSize ?? run.bbox.height) > (largest.style.fontSize ?? largest.bbox.height) ? run : largest);
@@ -70,13 +64,6 @@ export function paintTranslatedPlacement(context: CanvasRenderingContext2D, plac
   const baseline = y - height + padding + (innerHeight - fontSize) / 2 + fontSize * 0.8;
   context.fillStyle = placement.color ?? "#000"; context.textBaseline = "alphabetic"; context.direction = placement.direction === "rtl" ? "rtl" : "ltr"; context.textAlign = placement.direction === "rtl" ? "right" : "left";
   context.fillText(text, placement.direction === "rtl" ? x + width - padding : x + padding, baseline, Math.max(1, width - padding * 2));
-}
-
-function maskRegion(context: CanvasRenderingContext2D, bbox: BoundingBox, pageHeight: number): void {
-  const scale = context.canvas.height / pageHeight; const inset = scale;
-  const x = bbox.x * scale; const y = (pageHeight - bbox.y - bbox.height) * scale; const width = bbox.width * scale; const height = bbox.height * scale;
-  context.fillStyle = "#fff";
-  context.fillRect(x + inset, y + inset, Math.max(0, width - inset * 2), Math.max(0, height - inset * 2));
 }
 
 function dataUrlBytes(value: string): Uint8Array { return Uint8Array.from(atob(value.split(",")[1]), (character) => character.charCodeAt(0)); }
