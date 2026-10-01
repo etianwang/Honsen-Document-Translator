@@ -33,7 +33,7 @@ export function translatedLineText(line: TextLine): string | undefined {
   return line.runs.some((run) => run.translatedText !== undefined) ? line.runs.map((run) => run.translatedText ?? "").join("") : undefined;
 }
 
-export interface TranslatedPlacement { id: string; lineId: string; bbox: BoundingBox; text: string; direction?: TextDirection; fontSize: number; }
+export interface TranslatedPlacement { id: string; lineId: string; bbox: BoundingBox; text: string; direction?: TextDirection; fontSize: number; color?: string; bold?: boolean; italic?: boolean; }
 
 export function translatedCellRegions(page: DocumentModel["pages"][number]): BoundingBox[] {
   return page.blocks.flatMap((block) => block.type === "table"
@@ -46,10 +46,14 @@ export function translatedPlacements(page: DocumentModel["pages"][number]): Tran
     const text = translatedLineText(line);
     if (text === undefined) return [];
     const split = line.runs.slice(1).some((run) => Boolean(run.translatedText));
-    return split
-      ? line.runs.filter((run) => run.translatedText !== undefined).map((run) => ({ id: run.id, lineId: run.id, bbox: run.bbox, text: run.translatedText ?? "", direction: line.direction, fontSize: run.style.fontSize ?? run.bbox.height }))
-      : [{ id: line.id, lineId: line.id, bbox: line.bbox, text, direction: line.direction, fontSize: Math.max(...line.runs.map((run) => run.style.fontSize ?? run.bbox.height), 1) }];
+    if (split) return line.runs.filter((run) => run.translatedText !== undefined).map((run) => placementForRun(run, run.id, run.id, run.bbox, run.translatedText ?? "", line.direction));
+    const source = line.runs.reduce((largest, run) => (run.style.fontSize ?? run.bbox.height) > (largest.style.fontSize ?? largest.bbox.height) ? run : largest);
+    return [placementForRun(source, line.id, line.id, line.bbox, text, line.direction)];
   });
+}
+
+function placementForRun(run: TextLine["runs"][number], id: string, lineId: string, bbox: BoundingBox, text: string, direction: TextDirection | undefined): TranslatedPlacement {
+  return { id, lineId, bbox, text, direction, fontSize: run.style.fontSize ?? run.bbox.height, color: run.style.color, bold: run.style.bold || (run.style.fontWeight ?? 0) >= 600, italic: run.style.italic };
 }
 
 export function paintTranslatedPlacement(context: CanvasRenderingContext2D, placement: TranslatedPlacement, pageHeight: number, clearSourceText = true): void {
@@ -60,11 +64,12 @@ export function paintTranslatedPlacement(context: CanvasRenderingContext2D, plac
   if (!text.trim()) return;
   const sourceSize = placement.fontSize * scale;
   const innerHeight = Math.max(1, height - padding * 2);
-  context.font = `${sourceSize}px Arial, "Microsoft YaHei", sans-serif`;
+  const fontStyle = `${placement.italic ? "italic " : ""}${placement.bold ? "bold " : ""}`;
+  context.font = `${fontStyle}${sourceSize}px Arial, "Microsoft YaHei", sans-serif`;
   const fontSize = Math.max(1.5 * scale, Math.min(sourceSize, innerHeight / 1.15, width / context.measureText(text).width * sourceSize));
-  context.font = `${fontSize}px Arial, "Microsoft YaHei", sans-serif`;
+  context.font = `${fontStyle}${fontSize}px Arial, "Microsoft YaHei", sans-serif`;
   const baseline = y - height + padding + (innerHeight - fontSize) / 2 + fontSize * 0.8;
-  context.fillStyle = "#000"; context.textBaseline = "alphabetic"; context.direction = placement.direction === "rtl" ? "rtl" : "ltr"; context.textAlign = placement.direction === "rtl" ? "right" : "left";
+  context.fillStyle = placement.color ?? "#000"; context.textBaseline = "alphabetic"; context.direction = placement.direction === "rtl" ? "rtl" : "ltr"; context.textAlign = placement.direction === "rtl" ? "right" : "left";
   context.fillText(text, placement.direction === "rtl" ? x + width - padding : x + padding, baseline, Math.max(1, width - padding * 2));
 }
 

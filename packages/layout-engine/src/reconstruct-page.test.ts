@@ -34,6 +34,13 @@ describe("reconstructPage", () => {
     }
   });
 
+  it("keeps extracted source color with the text run", () => {
+    const page: RawPage = { number: 1, width: 100, height: 100, rotation: 0, textItems: [{ id: "title", text: "Title", bbox: { x: 10, y: 80, width: 30, height: 14 }, fontName: "Helvetica-Bold", fontSize: 14, rotation: 0, color: "#e53935" }] };
+    const block = reconstructPage(page).blocks[0];
+    if (block?.type !== "text") throw new Error("Expected text block");
+    expect(block.paragraphs[0]?.lines[0]?.runs[0]?.style).toMatchObject({ color: "#e53935", bold: true, fontSize: 14 });
+  });
+
   it("uses vector cell geometry to keep table columns as separate writable regions", () => {
     const page: RawPage = {
       number: 1, width: 200, height: 200, rotation: 0,

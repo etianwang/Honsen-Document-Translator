@@ -68,12 +68,19 @@ export async function parsePdf(data: Uint8Array, sourcePath: string, onProgress?
     let content;
     try { content = await page.getTextContent(); }
     catch (error: unknown) { issues.push(normalizePdfPageError(error, pageNumber)); content = { items: [] }; }
-    const textItems = content.items.flatMap((item, index) =>
-      "str" in item && item.str.trim() ? [toRawTextItem(item, index, pageNumber)] : [],
-    );
+    const sourceItems: TextItem[] = [];
+    for (const item of content.items) {
+      if (!("str" in item) || !item.str.trim()) continue;
+      sourceItems.push(item);
+    }
+    let textItems = sourceItems.map((item, index) => toRawTextItem(item, index, pageNumber));
     let images: ImageBlock[] = []; let vectorPaths: BoundingBox[] = [];
     try {
       const operators = await page.getOperatorList();
+      const colors = extractTextColors(operators);
+      // PDF.js may split/merge text items differently from glyph operators. Only use colors
+      // when the sequence is exact; a wrong color is worse than the safe black fallback.
+      if (colors.length === sourceItems.length) textItems = sourceItems.map((item, index) => toRawTextItem(item, index, pageNumber, colors[index]));
       images = extractImages(operators, page.objs, pageNumber);
       vectorPaths = extractVectorPaths(operators);
     } catch (error: unknown) { issues.push(normalizePdfPageError(error, pageNumber, "PDF_GEOMETRY_EXTRACTION_FAILED")); }
@@ -117,6 +124,25 @@ function isGlyphDrawingOperator(operator: number): boolean {
   return operator === OPS.showText || operator === OPS.showSpacedText || operator === OPS.nextLineShowText || operator === OPS.nextLineSetSpacingShowText;
 }
 
+export function extractTextColors(operators: OperatorList): Array<string | undefined> {
+  const colors: Array<string | undefined> = []; let fillColor: string | undefined;
+  for (let index = 0; index < operators.fnArray.length; index += 1) {
+    const operator = operators.fnArray[index]; const args = operators.argsArray[index];
+    if (operator === OPS.setFillRGBColor) fillColor = normalizeColor(args?.[0]);
+    else if (operator === OPS.setFillGray) fillColor = grayColor(args?.[0]);
+    else if (operator === OPS.setFillColor) fillColor = undefined;
+    if (isGlyphDrawingOperator(operator)) colors.push(fillColor);
+  }
+  return colors;
+}
+
+function normalizeColor(value: unknown): string | undefined { return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : undefined; }
+function grayColor(value: unknown): string | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const channel = Math.round(Math.max(0, Math.min(1, value)) * 255).toString(16).padStart(2, "0");
+  return `#${channel}${channel}${channel}`;
+}
+
 function extractImages(operators: OperatorList, rawObjects: unknown, pageNumber: number): ImageBlock[] {
   const objects = rawObjects as { has(id: string): boolean; get(id: string): unknown };
   const images: ImageBlock[] = []; let transform = [1, 0, 0, 1, 0, 0];
@@ -150,7 +176,7 @@ function bmp(image: PdfImage): Uint8Array {
 }
 function base64(bytes: Uint8Array): string { let binary = ""; for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000)); return btoa(binary); }
 
-function toRawTextItem(item: TextItem, index: number, pageNumber: number): RawTextItem {
+function toRawTextItem(item: TextItem, index: number, pageNumber: number, color?: string): RawTextItem {
   const [, b, , d, x, y] = item.transform;
   const fontSize = Math.max(Math.abs(d), item.height, 1);
   return {
@@ -160,5 +186,6 @@ function toRawTextItem(item: TextItem, index: number, pageNumber: number): RawTe
     fontName: item.fontName,
     fontSize,
     rotation: Math.atan2(b, item.transform[0]) * (180 / Math.PI),
+    color,
   };
 }

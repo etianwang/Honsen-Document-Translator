@@ -15,8 +15,10 @@ describe("translatedLines", () => {
     const context = { canvas: { width: 400, height: 400 }, font: "", fillStyle: "", textBaseline: "", direction: "ltr", textAlign: "left", measureText: () => ({ width: 20 }), fillRect, fillText } as unknown as CanvasRenderingContext2D;
     const line = { id: "line", bbox: { x: 10, y: 10, width: 30, height: 10 }, runs: [{ id: "first", bbox: { x: 10, y: 10, width: 10, height: 10 }, text: "Source", translatedText: "译文", style: { fontSize: 10 } }, { id: "second", bbox: { x: 20, y: 10, width: 20, height: 10 }, text: " text", translatedText: "", style: { fontSize: 10 } }] };
     expect(translatedLineText(line)).toBe("译文");
-    paintTranslatedPlacement(context, { id: line.id, lineId: line.id, bbox: line.bbox, text: "译文", fontSize: 10 }, 100);
+    paintTranslatedPlacement(context, { id: line.id, lineId: line.id, bbox: line.bbox, text: "译文", fontSize: 10, color: "#e53935", bold: true, italic: true }, 100);
     expect(fillRect).toHaveBeenCalledBefore(fillText);
+    expect(context.fillStyle).toBe("#e53935");
+    expect(context.font).toMatch(/^italic bold /);
     expect(fillText.mock.calls[0]?.[2]).toBeGreaterThan(320);
     expect(fillText.mock.calls[0]?.[2]).toBeLessThan(360);
   });

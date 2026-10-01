@@ -1,7 +1,7 @@
 export interface BoundingBox { x: number; y: number; width: number; height: number; }
 export interface DocumentIssue { code: string; message: string; pageNumber?: number; }
 export type TextDirection = "ltr" | "rtl";
-export interface RawTextItem { id: string; text: string; bbox: BoundingBox; fontName: string; fontSize: number; rotation: number; direction?: TextDirection; }
+export interface RawTextItem { id: string; text: string; bbox: BoundingBox; fontName: string; fontSize: number; rotation: number; color?: string; direction?: TextDirection; }
 export interface RawPage { number: number; width: number; height: number; rotation: number; textItems: RawTextItem[]; images?: ImageBlock[]; vectorPaths?: BoundingBox[]; }
 export interface RawDocument { sourcePath: string; pages: RawPage[]; issues?: DocumentIssue[]; }
 

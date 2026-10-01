@@ -165,7 +165,7 @@ function groupLines(items: RawTextItem[], pageNumber: number): TextLine[] {
 function makeLine(items: RawTextItem[], pageNumber: number, index: number): TextLine {
   const direction = items.some((item) => item.direction === "rtl") ? "rtl" as const : undefined;
   const ordered = [...items].sort((left, right) => direction === "rtl" ? right.bbox.x - left.bbox.x : left.bbox.x - right.bbox.x);
-  return { id: `page-${pageNumber}-line-${index}`, bbox: bounds(ordered.map((item) => item.bbox)), direction, runs: ordered.map((item) => ({ id: item.id, bbox: item.bbox, text: item.text, style: { originalFontName: item.fontName, fontSize: item.fontSize, bold: /bold/i.test(item.fontName), italic: /italic|oblique/i.test(item.fontName), rotation: item.rotation } })) };
+  return { id: `page-${pageNumber}-line-${index}`, bbox: bounds(ordered.map((item) => item.bbox)), direction, runs: ordered.map((item) => ({ id: item.id, bbox: item.bbox, text: item.text, style: { originalFontName: item.fontName, fontSize: item.fontSize, bold: /bold/i.test(item.fontName), italic: /italic|oblique/i.test(item.fontName), color: item.color, rotation: item.rotation } })) };
 }
 
 function groupParagraphs(lines: TextLine[]): ParagraphModel[] {

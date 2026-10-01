@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { cleanBackgroundOperationsFilter, normalizePdfError, normalizePdfPageError, parsePdf } from "./parse-pdf";
+import { cleanBackgroundOperationsFilter, extractTextColors, normalizePdfError, normalizePdfPageError, parsePdf } from "./parse-pdf";
 
 describe("parsePdf", () => {
   it("extracts geometry, text, and source font metadata", async () => {
@@ -43,5 +43,10 @@ describe("parsePdf", () => {
     const filter = cleanBackgroundOperationsFilter({ fnArray: [OPS.save, OPS.constructPath, OPS.fill, OPS.showText, OPS.paintImageXObject, OPS.beginAnnotation, OPS.showText, OPS.endAnnotation, OPS.restore] });
     expect([0, 1, 2, 4, 5, 6, 7, 8].every(filter)).toBe(true);
     expect(filter(3)).toBe(false);
+  });
+
+  it("keeps RGB and gray fill colors aligned with ordinary glyph draws", () => {
+    const colors = extractTextColors({ fnArray: [OPS.setFillRGBColor, OPS.showText, OPS.setFillGray, OPS.showText, OPS.setFillColor, OPS.showText], argsArray: [["#E53935"], [], [0.5], [], [], []] });
+    expect(colors).toEqual(["#e53935", "#808080", undefined]);
   });
 });
