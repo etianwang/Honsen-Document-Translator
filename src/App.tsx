@@ -238,7 +238,10 @@ function App() {
     });
     setMessage("译文修改已应用，将随导出一并保存。");
   }
-  const previewTerms = useMemo(() => glossaryEntries.slice(0, 3), [glossaryEntries]);
+  const previewTerms = useMemo(
+    () => glossaryEntries.length > 3 ? [...glossaryEntries.slice(0, 2), glossaryEntries[glossaryEntries.length - 1]!] : glossaryEntries,
+    [glossaryEntries],
+  );
   const issues = model?.issues ?? [];
   return <main className="app-shell">
     <header className="app-header" data-tauri-drag-region><div className="brand" data-tauri-drag-region><img className="app-logo" src={appLogo} alt="" /><h1>Honsen PDF Translator</h1></div><span className="brand-note" data-tauri-drag-region>目前无AI加持，图片型PDF翻译成功率低。没有米子接入AI (ó﹏ò｡)</span><UpdateCenter status={updateStatus} checking={checkingUpdate} installing={installingUpdate} desktop={isTauri} onCheck={() => void checkForUpdate()} onInstall={() => void installUpdate()} onClose={() => setUpdateStatus(undefined)} /><SponsorAuthor open={sponsorOpen} onToggle={() => setSponsorOpen((open) => !open)} onClose={() => setSponsorOpen(false)} /><WindowControls /></header>
@@ -260,7 +263,11 @@ function App() {
         <div className="card-title"><h2>▤ 术语表</h2></div>
         <p>使用 YAML 文件保持术语翻译一致。</p>
         <div className="glossary-file"><strong>{glossaryName}</strong><span>● 已加载 {glossaryEntries.length} 条术语</span><button className="button secondary" type="button" onClick={chooseGlossary}>选择 / 更换文件</button>{glossaryName !== defaultGlossaryName && <button className="text-button" type="button" onClick={() => { setGlossaryName(defaultGlossaryName); setGlossaryEntries(defaultGlossaryEntries); setMessage("已恢复内置术语库。"); }}>恢复内置</button>}</div>
-        {previewTerms.length > 0 && <ol className="yaml-preview">{previewTerms.map((entry) => <li key={entry.source}><code>{entry.source}: <b>{entry.target}</b></code></li>)}</ol>}
+        {previewTerms.length > 0 && <ol className="yaml-preview">
+          {previewTerms.slice(0, 2).map((entry, index) => <li key={`${entry.source}-${index}`}><span className="yaml-index">{index + 1}.</span><code>{entry.source}: <b>{entry.target}</b></code></li>)}
+          {glossaryEntries.length > 3 && <li className="yaml-ellipsis" aria-label="中间术语已省略"><span className="yaml-index">…</span></li>}
+          {previewTerms.slice(2).map((entry, index) => <li key={`${entry.source}-${index + 2}`}><span className="yaml-index">{glossaryEntries.length > 3 ? glossaryEntries.length : index + 3}.</span><code>{entry.source}: <b>{entry.target}</b></code></li>)}
+        </ol>}
         <div className="tip"><strong>💡 提示</strong><span>术语表会在翻译时优先应用，提升全篇一致性。</span></div>
         <div className="exports"><button className="button secondary" type="button" onClick={exportDocx} disabled={!model || isBusy(stage)}>导出 DOCX（版式）</button><button className="button secondary" type="button" onClick={exportPdf} disabled={!model || isBusy(stage)}>导出 PDF</button></div>
       </aside>
