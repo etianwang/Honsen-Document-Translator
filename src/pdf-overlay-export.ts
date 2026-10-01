@@ -43,8 +43,7 @@ export function translatedCellRegions(page: DocumentModel["pages"][number]): Bou
 
 export function translatedPlacements(page: DocumentModel["pages"][number]): TranslatedPlacement[] {
   return translatedLines(page).flatMap((line) => {
-    const text = translatedLineText(line);
-    if (text === undefined) return [];
+    const text = translatedLineText(line) ?? line.runs.map((run) => run.text).join("");
     const split = line.runs.slice(1).some((run) => Boolean(run.translatedText));
     if (split) return line.runs.filter((run) => run.translatedText !== undefined).map((run) => placementForRun(run, run.id, run.id, run.bbox, run.translatedText ?? "", line.direction));
     const source = line.runs.reduce((largest, run) => (run.style.fontSize ?? run.bbox.height) > (largest.style.fontSize ?? largest.bbox.height) ? run : largest);

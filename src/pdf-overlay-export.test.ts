@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DocumentModel } from "@pdf-translator/document-model";
-import { paintTranslatedPlacement, translatedCellRegions, translatedLineText, translatedLines } from "./pdf-overlay-export";
+import { paintTranslatedPlacement, translatedCellRegions, translatedLineText, translatedLines, translatedPlacements } from "./pdf-overlay-export";
 
 describe("translatedLines", () => {
   it("includes text and table-cell lines for coordinate-based PDF export", () => {
@@ -21,5 +21,11 @@ describe("translatedLines", () => {
     expect(context.font).toMatch(/^italic bold /);
     expect(fillText.mock.calls[0]?.[2]).toBeGreaterThan(320);
     expect(fillText.mock.calls[0]?.[2]).toBeLessThan(360);
+  });
+
+  it("keeps an untranslated source line on the clean background", () => {
+    const line = { id: "line", bbox: { x: 0, y: 0, width: 10, height: 10 }, runs: [{ id: "run", bbox: { x: 0, y: 0, width: 10, height: 10 }, text: "QTE", style: {} }] };
+    const page = { number: 1, width: 10, height: 10, rotation: 0, margins: { top: 0, right: 0, bottom: 0, left: 0 }, blocks: [{ id: "text", type: "text" as const, bbox: line.bbox, readingOrder: 0, paragraphs: [{ id: "paragraph", bbox: line.bbox, alignment: "left" as const, lines: [line] }] }] };
+    expect(translatedPlacements(page).map((placement) => placement.text)).toEqual(["QTE"]);
   });
 });
