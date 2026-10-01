@@ -8,6 +8,14 @@ export function buildDocx(model: DocumentModel): Document {
   })) });
 }
 
+/** A layout-faithful DOCX uses the already-rendered translation page instead of unreliable Word floating text/table reconstruction. */
+export function buildVisualDocx(pages: ReadonlyArray<{ width: number; height: number; png: Uint8Array }>): Document {
+  return new Document({ sections: pages.map((page) => ({
+    properties: { page: { size: { width: pointsToTwips(page.width), height: pointsToTwips(page.height) }, margin: { top: 0, right: 0, bottom: 0, left: 0 } } },
+    children: [new Paragraph({ children: [new ImageRun({ data: page.png, type: "png", transformation: { width: pointsToPixels(page.width), height: pointsToPixels(page.height) }, floating: { horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, offset: 0 }, verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: 0 }, behindDocument: false } })] })],
+  })) });
+}
+
 function toChild(block: DocumentBlock, page: DocumentPage): Array<Paragraph | Table> {
   return block.type === "text"
     ? block.paragraphs.flatMap((paragraph) => paragraph.lines.map((line) => toPositionedParagraph(paragraph, line, page)))
@@ -40,4 +48,5 @@ function alignment(value: ParagraphAlignment): (typeof AlignmentType)[keyof type
 
 function pointsToTwips(points: number): number { return Math.round(points * 20); }
 function pointsToEmus(points: number): number { return Math.round(points * 12700); }
+function pointsToPixels(points: number): number { return Math.round(points * 4 / 3); }
 function topOf(box: { y: number; height: number }, page: DocumentPage): number { return page.height - box.y - box.height; }

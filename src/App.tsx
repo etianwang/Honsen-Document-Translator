@@ -4,12 +4,12 @@ import { readFile, writeFile } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Packer } from "docx";
-import { buildDocx, validateDocx } from "@pdf-translator/docx-engine";
+import { buildVisualDocx, validateDocx } from "@pdf-translator/docx-engine";
 import type { DocumentModel, DocumentPage, ParagraphModel, ProcessingStage } from "@pdf-translator/document-model";
 import { translateDocument } from "@pdf-translator/translation-engine";
 import { DocumentPipeline } from "@pdf-translator/document-pipeline";
 import { configurePdfWorker, renderCleanBackgroundPages, renderPdfPages } from "@pdf-translator/pdf-parser";
-import { exportTranslatedPdf, translatedPlacements } from "./pdf-overlay-export";
+import { exportTranslatedPdf, renderTranslatedPages, translatedPlacements } from "./pdf-overlay-export";
 import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
 import { TauriOcrProvider } from "./tauri-ocr-provider";
@@ -118,9 +118,9 @@ function App() {
     const path = await save({ defaultPath: `${name?.replace(/\.pdf$/i, "") ?? "translated"}.docx`, filters: [{ name: "Word document", extensions: ["docx"] }] });
     if (!path) return;
     try {
-      setStage("generating-docx"); setPhase("exporting-docx"); setMessage("Generating editable DOCX...");
+      setStage("generating-docx"); setPhase("exporting-docx"); setMessage("正在生成保留版式的 DOCX…");
       await writeFile(path, await docxBytes());
-      setStage("completed"); setPhase("review-translation"); setMessage("DOCX exported.");
+      setStage("completed"); setPhase("review-translation"); setMessage("DOCX 已导出。");
     } catch (error: unknown) {
       recordDiagnostic("docx-export", error); setStage("failed"); setPhase("review-translation"); setMessage(userMessage(error, "DOCX 导出失败，请重试。"));
     }
@@ -180,7 +180,8 @@ function App() {
   }
 
   async function docxBytes(): Promise<Uint8Array> {
-    const blob = await Packer.toBlob(buildDocx(model!));
+    if (!sourceBytes) throw new Error("DOCX_GENERATION_FAILED: 原始 PDF 数据不可用，请重新导入文件。");
+    const blob = await Packer.toBlob(buildVisualDocx(await renderTranslatedPages(sourceBytes, model!, ocrPages)));
     const bytes = new Uint8Array(await blob.arrayBuffer());
     await validateDocx(bytes);
     return bytes;
@@ -231,7 +232,7 @@ function App() {
         <div className="glossary-file"><strong>{glossaryName ?? "尚未选择 YAML 文件"}</strong><span>{glossaryEntries.length ? `● 已加载 ${glossaryEntries.length} 条术语` : "选择 .yaml 或 .yml 文件"}</span><button className="button secondary" type="button" onClick={chooseGlossary}>选择 / 更换文件</button>{glossaryName && <button className="text-button" type="button" onClick={() => { setGlossaryName(undefined); setGlossaryEntries([]); }}>清除</button>}</div>
         {previewTerms.length > 0 && <ol className="yaml-preview">{previewTerms.map((entry) => <li key={entry.source}><code>{entry.source}: <b>{entry.target}</b></code></li>)}</ol>}
         <div className="tip"><strong>💡 提示</strong><span>术语表会在翻译时优先应用，提升全篇一致性。</span></div>
-        <div className="exports"><button className="button secondary" type="button" onClick={exportDocx} disabled={!model || isBusy(stage)}>导出 DOCX</button><button className="button secondary" type="button" onClick={exportPdf} disabled={!model || isBusy(stage)}>导出 PDF</button></div>
+        <div className="exports"><button className="button secondary" type="button" onClick={exportDocx} disabled={!model || isBusy(stage)}>导出 DOCX（版式）</button><button className="button secondary" type="button" onClick={exportPdf} disabled={!model || isBusy(stage)}>导出 PDF</button></div>
       </aside>
     </section>
   </main>;

@@ -1,8 +1,10 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
+import { Packer } from "docx";
 import type { DocumentModel } from "@pdf-translator/document-model";
+import { buildVisualDocx } from "./build-docx";
 import { generateDocx } from "./generate-docx";
 import { validateDocx } from "./validate-docx";
 
@@ -38,6 +40,16 @@ describe("generateDocx", () => {
     const xml = await archive.file("word/document.xml")?.async("string");
     expect(xml).toContain("w:framePr");
     expect(xml).toContain("w:tblpPr");
+  });
+
+  it("writes a layout-faithful DOCX page image without floating text or tables", async () => {
+    const outputPath = join(process.cwd(), "output", "docx", "page-image.docx");
+    const png = await readFile(join(process.cwd(), "logo.png"));
+    await writeFile(outputPath, await Packer.toBuffer(buildVisualDocx([{ width: 612, height: 792, png }])));
+    const archive = await JSZip.loadAsync(await readFile(outputPath));
+    const xml = await archive.file("word/document.xml")?.async("string");
+    expect(xml).toContain("wp:anchor");
+    expect(xml).not.toContain("<w:tbl>");
   });
 
   it("rejects data that is not an OOXML package", async () => {

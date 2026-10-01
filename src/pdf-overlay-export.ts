@@ -4,8 +4,19 @@ import { renderCleanBackgroundPage } from "@pdf-translator/pdf-parser";
 
 const renderScale = 4;
 
+export interface RenderedTranslationPage { number: number; width: number; height: number; png: Uint8Array; }
+
 export async function exportTranslatedPdf(source: Uint8Array, model: DocumentModel, maskedPages: ReadonlySet<number> = new Set()): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
+  for (const pageModel of await renderTranslatedPages(source, model, maskedPages)) {
+    const page = pdf.addPage([pageModel.width, pageModel.height]);
+    page.drawImage(await pdf.embedPng(pageModel.png), { x: 0, y: 0, width: pageModel.width, height: pageModel.height });
+  }
+  return pdf.save();
+}
+
+export async function renderTranslatedPages(source: Uint8Array, model: DocumentModel, maskedPages: ReadonlySet<number> = new Set()): Promise<RenderedTranslationPage[]> {
+  const pages: RenderedTranslationPage[] = [];
   for (const pageModel of model.pages) {
     const canvas = document.createElement("canvas");
     const usedFallback = (await renderCleanBackgroundPage(source.slice(), pageModel.number, canvas, undefined, renderScale)) || maskedPages.has(pageModel.number);
@@ -13,10 +24,9 @@ export async function exportTranslatedPdf(source: Uint8Array, model: DocumentMod
     if (!context) throw new Error("PDF_EXPORT_FAILED: canvas renderer is unavailable.");
     // Match preview rendering: only OCR and pages where clean-background rendering failed need a white text mask.
     for (const placement of translatedPlacements(pageModel)) paintTranslatedPlacement(context, placement, pageModel.height, usedFallback);
-    const page = pdf.addPage([pageModel.width, pageModel.height]);
-    page.drawImage(await pdf.embedPng(dataUrlBytes(canvas.toDataURL("image/png"))), { x: 0, y: 0, width: pageModel.width, height: pageModel.height });
+    pages.push({ number: pageModel.number, width: pageModel.width, height: pageModel.height, png: dataUrlBytes(canvas.toDataURL("image/png")) });
   }
-  return pdf.save();
+  return pages;
 }
 
 export function translatedLines(page: DocumentModel["pages"][number]): TextLine[] {
