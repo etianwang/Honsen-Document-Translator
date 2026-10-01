@@ -1,0 +1,178 @@
+# 内置英法机电工程术语库（原文: 中文）
+# 强电 / 弱电
+electricity: 电气
+electrical: 电气
+électricité: 电气
+électrique: 电气
+power supply: 电源
+alimentation: 电源
+power distribution: 配电
+distribution: 配电
+tableau électrique: 配电箱
+switchboard: 配电柜
+panel: 配电箱
+transformer: 变压器
+transformateur: 变压器
+generator: 发电机
+générateur: 发电机
+lighting: 照明
+éclairage: 照明
+luminaire: 灯具
+socket outlet: 插座
+prise de courant: 插座
+circuit breaker: 断路器
+disjoncteur: 断路器
+fuse: 熔断器
+fusible: 熔断器
+earthing: 接地
+grounding: 接地
+mise à la terre: 接地
+earth conductor: 接地线
+cable: 电缆
+câble: 电缆
+conduit: 线管
+gaine: 线管
+tray: 桥架
+chemin de câble: 电缆桥架
+low voltage: 低压
+basse tension: 低压
+high voltage: 高压
+haute tension: 高压
+ELV: 弱电
+courant faible: 弱电
+fire alarm: 火灾报警
+alarme incendie: 火灾报警
+fire detection: 火灾探测
+détection incendie: 火灾探测
+access control: 门禁系统
+contrôle d'accès: 门禁系统
+data network: 数据网络
+réseau informatique: 数据网络
+telephone: 电话
+téléphone: 电话
+CCTV: 视频监控
+vidéosurveillance: 视频监控
+intercom: 对讲系统
+interphone: 对讲系统
+
+# 暖通空调
+HVAC: 暖通空调
+CVC: 暖通空调
+heating: 供暖
+chauffage: 供暖
+ventilation: 通风
+air conditioning: 空调
+climatisation: 空调
+air handling unit: 空气处理机组
+centrale de traitement d'air: 空气处理机组
+AHU: 空气处理机组
+fan coil unit: 风机盘管
+ventilo-convecteur: 风机盘管
+FCU: 风机盘管
+heat pump: 热泵
+pompe à chaleur: 热泵
+boiler: 锅炉
+chaudière: 锅炉
+chiller: 冷水机组
+groupe frigorifique: 冷水机组
+duct: 风管
+gaine de ventilation: 风管
+air duct: 风管
+diffuser: 散流器
+diffuseur: 散流器
+grille: 风口
+exhaust: 排风
+extraction: 排风
+fresh air: 新风
+air neuf: 新风
+return air: 回风
+air repris: 回风
+thermostat: 温控器
+thermostat: 温控器
+insulation: 保温层
+calorifuge: 保温层
+damper: 风阀
+registre: 风阀
+valve: 阀门
+vanne: 阀门
+
+# 给排水 / 消防
+plumbing: 给排水
+plomberie: 给排水
+water supply: 给水
+alimentation en eau: 给水
+cold water: 冷水
+eau froide: 冷水
+hot water: 热水
+eau chaude: 热水
+sanitary water: 生活给水
+eau sanitaire: 生活给水
+drainage: 排水
+évacuation: 排水
+waste water: 污水
+eaux usées: 污水
+rainwater: 雨水
+eaux pluviales: 雨水
+sewer: 污水管
+assainissement: 污水系统
+pipe: 管道
+tuyau: 管道
+PVC: PVC 管
+PEHD: HDPE 管
+manhole: 检查井
+regard: 检查井
+floor drain: 地漏
+siphon de sol: 地漏
+water meter: 水表
+compteur d'eau: 水表
+pump: 水泵
+pompe: 水泵
+fire protection: 消防
+protection incendie: 消防
+sprinkler: 喷淋头
+extinguisher: 灭火器
+extincteur: 灭火器
+hydrant: 消火栓
+robinet d'incendie armé: 消防软管卷盘
+
+# 建筑、空间与计量
+ground floor: 首层
+RDC: 首层
+rdc: 首层
+basement: 地下室
+sous-sol: 地下室
+technical room: 机房
+local technique: 机房
+LT: 机房
+lt: 机房
+shaft: 竖井
+gaine technique: 竖井
+ceiling: 天花
+plafond: 天花
+wall: 墙体
+mur: 墙体
+floor: 地面
+sol: 地面
+plan: 平面图
+section: 剖面
+élévation: 立面
+m: 米
+mm: 毫米
+cm: 厘米
+km: 千米
+m²: 平方米
+m3: 立方米
+m³: 立方米
+L: 升
+l: 升
+kW: 千瓦
+kVA: 千伏安
+W: 瓦
+V: 伏特
+A: 安培
+Hz: 赫兹
+Pa: 帕
+bar: 巴
+°C: 摄氏度
+DN: 公称直径
+Ø: 直径

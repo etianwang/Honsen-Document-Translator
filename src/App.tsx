@@ -9,7 +9,7 @@ import type { DocumentModel, DocumentPage, ParagraphModel, ProcessingStage } fro
 import { translateDocument } from "@pdf-translator/translation-engine";
 import { DocumentPipeline } from "@pdf-translator/document-pipeline";
 import { configurePdfWorker, renderCleanBackgroundPages, renderPdfPages } from "@pdf-translator/pdf-parser";
-import { exportTranslatedPdf, renderTranslatedPages, translatedPlacements } from "./pdf-overlay-export";
+import { exportTranslatedPdf, placementTop, renderTranslatedPages, translatedPlacements } from "./pdf-overlay-export";
 import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
 import { TauriOcrProvider } from "./tauri-ocr-provider";
@@ -19,9 +19,12 @@ import { canExport, canTranslate, isWorkflowBusy, recoverAfterCancel, restoreSou
 import appLogo from "../logo.png";
 import sponsorWechat from "./assets/sponsor-wechat.jpg";
 import sponsorAlipay from "./assets/sponsor-alipay.jpg";
+import defaultGlossaryYaml from "./assets/default-glossary.yaml?raw";
 import "./App.css";
 
 configurePdfWorker(pdfWorkerUrl);
+const defaultGlossaryEntries = parseGlossaryYaml(defaultGlossaryYaml);
+const defaultGlossaryName = "内置英法机电工程术语库";
 
 interface DeepLKeyStatus { configured: boolean; source?: string; }
 interface UpdateStatus { available: boolean; currentVersion: string; version?: string; releaseNotes?: string; }
@@ -56,6 +59,7 @@ function App() {
   const [targetLanguage, setTargetLanguage] = useState("ZH");
   const [sourceLanguage, setSourceLanguage] = useState("AUTO");
   const [ocrEnabled, setOcrEnabled] = useState(true);
+  const [wordLayoutMode, setWordLayoutMode] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [rememberKey, setRememberKey] = useState(true);
   const [showApiKey, setShowApiKey] = useState(false);
@@ -64,19 +68,19 @@ function App() {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [sponsorOpen, setSponsorOpen] = useState(false);
-  const [glossaryName, setGlossaryName] = useState<string>();
-  const [glossaryEntries, setGlossaryEntries] = useState<GlossaryEntry[]>([]);
+  const [glossaryName, setGlossaryName] = useState<string>(defaultGlossaryName);
+  const [glossaryEntries, setGlossaryEntries] = useState<GlossaryEntry[]>(defaultGlossaryEntries);
   const activeAbortController = useRef<AbortController | undefined>(undefined);
 
-  useEffect(() => { if (isTauri) { void invoke<DeepLKeyStatus>("deepl_key_status").then(setKeyStatus).catch(() => setKeyStatus({ configured: false })); void checkForUpdate(true); } }, []);
+  useEffect(() => { if (isTauri) { void invoke<DeepLKeyStatus>("deepl_key_status").then(setKeyStatus).catch(() => setKeyStatus({ configured: false })); void checkForUpdate(); } }, []);
   useEffect(() => { setPhase((current) => restoreSourceReview(current, Boolean(model) && stage === "completed")); }, [model, stage]);
 
-  async function checkForUpdate(autoInstall = false): Promise<void> {
+  async function checkForUpdate(): Promise<void> {
     if (!isTauri) { setMessage("请在桌面应用中检查更新。"); return; }
     setCheckingUpdate(true);
     try {
       const status = await invoke<UpdateStatus>("check_for_update");
-      setUpdateStatus(status); setMessage(status.available ? `发现 v${status.version} 更新。` : `当前已是最新版本 v${status.currentVersion}。`); if (autoInstall && status.available) await installUpdate(status);
+      setUpdateStatus(status); setMessage(status.available ? `发现 v${status.version} 更新。` : `当前已是最新版本 v${status.currentVersion}。`);
     } catch (error: unknown) { recordDiagnostic("update", error); setMessage(userMessage(error, "检查更新失败，请稍后重试。")); }
     finally { setCheckingUpdate(false); }
   }
@@ -115,10 +119,14 @@ function App() {
   async function exportDocx(): Promise<void> {
     if (!isTauri) { setMessage("DOM 调试仅支持 PDF 解析预览，请在桌面应用中导出。"); return; }
     if (!model || !canExport(phase)) { setMessage("请先完成翻译并确认译文后再导出 DOCX。"); return; }
-    const path = await save({ defaultPath: `${name?.replace(/\.pdf$/i, "") ?? "translated"}.docx`, filters: [{ name: "Word document", extensions: ["docx"] }] });
+    const path = await save({ defaultPath: `${targetLanguage.toLowerCase()}_${name?.replace(/\.pdf$/i, "") ?? "translated"}.docx`, filters: [{ name: "Word document", extensions: ["docx"] }] });
     if (!path) return;
     try {
       setStage("generating-docx"); setPhase("exporting-docx"); setMessage("正在生成保留版式的 DOCX…");
+      if (wordLayoutMode) {
+        await invoke("translate_pdf_via_docx", { request: { sourcePath: model.sourcePath, outputPath: path, targetLanguage, sourceLanguage: toDeepLSourceLanguage(sourceLanguage), apiKey: apiKey.trim() || undefined, format: "docx" } });
+        setStage("completed"); setPhase("review-translation"); setMessage("已按 Word 版式优先路径导出 DOCX。"); return;
+      }
       await writeFile(path, await docxBytes());
       setStage("completed"); setPhase("review-translation"); setMessage("DOCX 已导出。");
     } catch (error: unknown) {
@@ -126,9 +134,27 @@ function App() {
     }
   }
 
+  async function exportSourcePdfToDocx(): Promise<void> {
+    if (!isTauri || !model) { setMessage("请在桌面端导入 PDF 后使用原 PDF → DOCX 测试。"); return; }
+    const path = await save({ defaultPath: `${name?.replace(/\.pdf$/i, "") ?? "source"}.docx`, filters: [{ name: "Word document", extensions: ["docx"] }] });
+    if (!path) return;
+    const returnPhase = phase;
+    try {
+      setStage("generating-docx"); setPhase("exporting-docx"); setMessage("正在使用 pdf2docx 转换原始 PDF…");
+      await invoke("convert_source_pdf_to_docx", { sourcePath: model.sourcePath, outputPath: path });
+      setStage("completed"); setPhase(returnPhase); setMessage("原始 PDF 已转换为 DOCX（测试）。");
+    } catch (error: unknown) {
+      recordDiagnostic("docx-export", error); setStage("failed"); setPhase(returnPhase); setMessage(userMessage(error, "原始 PDF 转 DOCX 失败，请重试。"));
+    }
+  }
+
   async function translate(): Promise<void> {
     if (!isTauri) { setMessage("DOM 调试仅支持 PDF 解析预览，请在桌面应用中翻译。"); return; }
     if (!model || !canTranslate(phase)) { setMessage("请先导入并确认原文后再开始翻译。"); return; }
+    if (wordLayoutMode) {
+      if (!apiKey.trim() && !keyStatus.configured) { setMessage("请先填写或保存 DeepL API Key。"); return; }
+      setStage("completed"); setPhase("review-translation"); setMessage("Word 版式优先已启用：将在导出时重建并翻译 DOCX。"); return;
+    }
     const controller = new AbortController(); activeAbortController.current = controller;
     try {
       if (apiKey.trim() && rememberKey) setKeyStatus(await invoke<DeepLKeyStatus>("save_deepl_api_key", { request: { apiKey, remember: true } }));
@@ -148,7 +174,7 @@ function App() {
     if (typeof path !== "string") return;
     try {
       const entries = parseGlossaryYaml(new TextDecoder().decode(await readFile(path)));
-      setGlossaryEntries(entries); setGlossaryName(path.split(/[\\/]/).pop()); setMessage(`已加载 ${entries.length} 条术语。`);
+      setGlossaryEntries(entries); setGlossaryName(path.split(/[\\/]/).pop() ?? path); setMessage(`已加载 ${entries.length} 条术语。`);
     } catch (error: unknown) { recordDiagnostic("glossary", error); setMessage(userMessage(error, "术语表读取失败。")); }
   }
 
@@ -162,10 +188,14 @@ function App() {
   async function exportPdf(): Promise<void> {
     if (!isTauri) { setMessage("DOM 调试仅支持 PDF 解析预览，请在桌面应用中导出。"); return; }
     if (!model || !canExport(phase)) { setMessage("请先完成翻译并确认译文后再导出 PDF。"); return; }
-    const path = await save({ defaultPath: `${name?.replace(/\.pdf$/i, "") ?? "translated"}.pdf`, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    const path = await save({ defaultPath: `${targetLanguage.toLowerCase()}_${name?.replace(/\.pdf$/i, "") ?? "translated"}.pdf`, filters: [{ name: "PDF", extensions: ["pdf"] }] });
     if (!path) return;
     try {
       setStage("generating-pdf"); setPhase("exporting-pdf"); setMessage("Generating PDF...");
+      if (wordLayoutMode) {
+        await invoke("translate_pdf_via_docx", { request: { sourcePath: model.sourcePath, outputPath: path, targetLanguage, sourceLanguage: toDeepLSourceLanguage(sourceLanguage), apiKey: apiKey.trim() || undefined, format: "pdf" } });
+        setStage("completed"); setPhase("review-translation"); setMessage("已按 Word 版式优先路径导出 PDF。"); return;
+      }
       if (!sourceBytes) throw new Error("PDF_EXPORT_FAILED: 原始 PDF 数据不可用，请重新导入文件。");
       await writeFile(path, await exportTranslatedPdf(sourceBytes, model, ocrPages));
       setStage("completed"); setPhase("review-translation"); setMessage("PDF exported.");
@@ -212,12 +242,12 @@ function App() {
   const issues = model?.issues ?? [];
   return <main className="app-shell">
     <header className="app-header" data-tauri-drag-region><div className="brand" data-tauri-drag-region><img className="app-logo" src={appLogo} alt="" /><h1>Honsen PDF Translator</h1></div><span className="brand-note" data-tauri-drag-region>目前无AI加持，图片型PDF翻译成功率低。没有米子接入AI (ó﹏ò｡)</span><UpdateCenter status={updateStatus} checking={checkingUpdate} installing={installingUpdate} desktop={isTauri} onCheck={() => void checkForUpdate()} onInstall={() => void installUpdate()} onClose={() => setUpdateStatus(undefined)} /><SponsorAuthor open={sponsorOpen} onToggle={() => setSponsorOpen((open) => !open)} onClose={() => setSponsorOpen(false)} /><WindowControls /></header>
-    <section className="toolbar-card" aria-label="翻译设置"><button className="button primary" type="button" onClick={selectPdf} disabled={isBusy(stage)}>＋ 导入 PDF</button><label>原文语言<select value={sourceLanguage} onChange={(event) => setSourceLanguage(event.currentTarget.value)} disabled={isBusy(stage)}><option value="AUTO">自动检测</option><option value="ZH">中文（简体）</option><option value="ZT">中文（繁体）</option><option value="EN">英语</option><option value="FR">法语</option><option value="ES">西班牙语</option><option value="DE">德语</option><option value="PT">葡萄牙语</option><option value="NL">荷兰语</option><option value="TR">土耳其语</option><option value="PL">波兰语</option><option value="NO">挪威语</option><option value="SV">瑞典语</option><option value="FI">芬兰语</option><option value="JA">日语</option><option value="KO">韩语</option><option value="RU">俄语</option><option value="UK">乌克兰语</option><option value="HU">匈牙利语</option><option value="KK">哈萨克语</option><option value="AR">阿拉伯语</option><option value="FA">波斯语</option></select></label><label>目标语言<select value={targetLanguage} onChange={(event) => setTargetLanguage(event.currentTarget.value)} disabled={isBusy(stage)}><option value="ZH">中文</option><option value="EN">英语</option><option value="FR">法语</option><option value="DE">德语</option><option value="JA">日语</option><option value="ES">西班牙语</option></select></label><label className="key-field">DeepL API Key<input type={showApiKey ? "text" : "password"} value={apiKey} onChange={(event) => setApiKey(event.currentTarget.value)} onBlur={() => void saveKey()} autoComplete="off" placeholder={keyStatus.configured ? "已配置" : "粘贴你的 API Key"} /><button className="icon-button" type="button" aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"} onClick={() => setShowApiKey((value) => !value)}>{showApiKey ? "◉" : "◌"}</button></label><div className="key-memory"><label className="check-field"><input type="checkbox" checked={rememberKey} onChange={(event) => { const remember = event.currentTarget.checked; setRememberKey(remember); if (!remember) void invoke("save_deepl_api_key", { request: { apiKey: "", remember: false } }).then(() => invoke<DeepLKeyStatus>("deepl_key_status")).then(setKeyStatus); }} />记住此密钥</label><span className={`key-state ${keyStatus.configured ? "ready" : ""}`}>{keyStatus.configured ? `● 已保存到安全存储${keyStatus.source ? `（${keyStatus.source}）` : ""}` : "○ 未保存"}</span></div><label className="switch-field"><input type="checkbox" checked={ocrEnabled} onChange={(event) => setOcrEnabled(event.currentTarget.checked)} /><span aria-hidden="true" />OCR 增强</label><label>页面范围<select disabled={isBusy(stage)}><option>全部页面</option></select></label><button className="button primary" type="button" onClick={translate} disabled={!model || isBusy(stage)}>▶ 开始翻译</button>{activeAbortController.current && <button className="button secondary" type="button" onClick={() => activeAbortController.current?.abort()}>取消当前任务</button>}</section>
+    <section className="toolbar-card" aria-label="翻译设置"><button className="button primary" type="button" onClick={selectPdf} disabled={isBusy(stage)}>＋ 导入 PDF</button><label>原文语言<select value={sourceLanguage} onChange={(event) => setSourceLanguage(event.currentTarget.value)} disabled={isBusy(stage)}><option value="AUTO">自动检测</option><option value="ZH">中文（简体）</option><option value="ZT">中文（繁体）</option><option value="EN">英语</option><option value="FR">法语</option><option value="ES">西班牙语</option><option value="DE">德语</option><option value="PT">葡萄牙语</option><option value="NL">荷兰语</option><option value="TR">土耳其语</option><option value="PL">波兰语</option><option value="NO">挪威语</option><option value="SV">瑞典语</option><option value="FI">芬兰语</option><option value="JA">日语</option><option value="KO">韩语</option><option value="RU">俄语</option><option value="UK">乌克兰语</option><option value="HU">匈牙利语</option><option value="KK">哈萨克语</option><option value="AR">阿拉伯语</option><option value="FA">波斯语</option></select></label><label>目标语言<select value={targetLanguage} onChange={(event) => setTargetLanguage(event.currentTarget.value)} disabled={isBusy(stage)}><option value="ZH">中文</option><option value="EN">英语</option><option value="FR">法语</option><option value="DE">德语</option><option value="JA">日语</option><option value="ES">西班牙语</option></select></label><label className="key-field">DeepL API Key<input type={showApiKey ? "text" : "password"} value={apiKey} onChange={(event) => setApiKey(event.currentTarget.value)} onBlur={() => void saveKey()} autoComplete="off" placeholder={keyStatus.configured ? "已配置" : "粘贴你的 API Key"} /><button className="icon-button" type="button" aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"} onClick={() => setShowApiKey((value) => !value)}>{showApiKey ? "◉" : "◌"}</button></label><div className="key-memory"><label className="check-field"><input type="checkbox" checked={rememberKey} onChange={(event) => { const remember = event.currentTarget.checked; setRememberKey(remember); if (!remember) void invoke("save_deepl_api_key", { request: { apiKey: "", remember: false } }).then(() => invoke<DeepLKeyStatus>("deepl_key_status")).then(setKeyStatus); }} />记住此密钥</label><span className={`key-state ${keyStatus.configured ? "ready" : ""}`}>{keyStatus.configured ? `● 已保存到安全存储${keyStatus.source ? `（${keyStatus.source}）` : ""}` : "○ 未保存"}</span></div><label className="switch-field"><input type="checkbox" checked={ocrEnabled} onChange={(event) => setOcrEnabled(event.currentTarget.checked)} /><span aria-hidden="true" />OCR 增强</label><label className="check-field" title="仅适合文字型 PDF；导出时会重新翻译 DOCX"> <input type="checkbox" checked={wordLayoutMode} onChange={(event) => setWordLayoutMode(event.currentTarget.checked)} disabled={isBusy(stage)} />Word 版式优先</label><label>页面范围<select disabled={isBusy(stage)}><option>全部页面</option></select></label><button className="button primary" type="button" onClick={translate} disabled={!model || isBusy(stage)}>▶ 开始翻译</button>{activeAbortController.current && <button className="button secondary" type="button" onClick={() => activeAbortController.current?.abort()}>取消当前任务</button>}</section>
     <section className="progress-card" aria-live="polite"><strong>翻译进度</strong><div className="progress-track" aria-label={`翻译进度 ${progress}%`}><span style={{ width: `${progress}%` }} /></div><span>{progress}%</span><span>{message}</span></section>
     {issues.length > 0 && <section className="issue-card" aria-label="文档问题" role="alert"><strong>文档问题（{issues.length}）</strong><ul>{issues.map((issue) => <li key={`${issue.code}-${issue.pageNumber ?? 0}`}>{issue.message}</li>)}</ul></section>}
     <section className="workspace" aria-label="PDF 翻译工作区">
       <article className="document-card">
-        <div className="card-title"><h2>▧ 原始 PDF</h2><ZoomControls zoom={zoom} onZoom={setZoom} /></div>
+        <div className="card-title"><h2>▧ 原始 PDF</h2><div className="translation-actions"><ZoomControls zoom={zoom} onZoom={setZoom} /><button className="button secondary print-button" type="button" onClick={exportSourcePdfToDocx} disabled={!isTauri || !model || isBusy(stage)}>原 PDF → DOCX</button></div></div>
         {sourceBytes && model ? <OriginalPdfPreview sourceBytes={sourceBytes} pages={model.pages} zoom={zoom} /> : <EmptyPreview text="导入 PDF 后在这里查看原文" />}
       </article>
       <article className="document-card translation-document-card">
@@ -229,7 +259,7 @@ function App() {
       <aside className="glossary-card">
         <div className="card-title"><h2>▤ 术语表</h2></div>
         <p>使用 YAML 文件保持术语翻译一致。</p>
-        <div className="glossary-file"><strong>{glossaryName ?? "尚未选择 YAML 文件"}</strong><span>{glossaryEntries.length ? `● 已加载 ${glossaryEntries.length} 条术语` : "选择 .yaml 或 .yml 文件"}</span><button className="button secondary" type="button" onClick={chooseGlossary}>选择 / 更换文件</button>{glossaryName && <button className="text-button" type="button" onClick={() => { setGlossaryName(undefined); setGlossaryEntries([]); }}>清除</button>}</div>
+        <div className="glossary-file"><strong>{glossaryName}</strong><span>● 已加载 {glossaryEntries.length} 条术语</span><button className="button secondary" type="button" onClick={chooseGlossary}>选择 / 更换文件</button>{glossaryName !== defaultGlossaryName && <button className="text-button" type="button" onClick={() => { setGlossaryName(defaultGlossaryName); setGlossaryEntries(defaultGlossaryEntries); setMessage("已恢复内置术语库。"); }}>恢复内置</button>}</div>
         {previewTerms.length > 0 && <ol className="yaml-preview">{previewTerms.map((entry) => <li key={entry.source}><code>{entry.source}: <b>{entry.target}</b></code></li>)}</ol>}
         <div className="tip"><strong>💡 提示</strong><span>术语表会在翻译时优先应用，提升全篇一致性。</span></div>
         <div className="exports"><button className="button secondary" type="button" onClick={exportDocx} disabled={!model || isBusy(stage)}>导出 DOCX（版式）</button><button className="button secondary" type="button" onClick={exportPdf} disabled={!model || isBusy(stage)}>导出 PDF</button></div>
@@ -256,7 +286,7 @@ function OriginalPdfPreview({ sourceBytes, pages, zoom }: { sourceBytes: Uint8Ar
 }
 
 function UpdateCenter({ status, checking, installing, desktop, onCheck, onInstall, onClose }: { status?: UpdateStatus; checking: boolean; installing: boolean; desktop: boolean; onCheck: () => void; onInstall: () => void; onClose: () => void }) {
-  return <div className="update-center" data-tauri-drag-region="false"><button className="text-button" type="button" disabled={!desktop || checking || installing} onClick={onCheck}>{checking ? "正在检查…" : "检查更新"}</button>{status && <section className="update-result" aria-live="polite"><button className="update-result-close" type="button" aria-label="关闭更新提示" onClick={onClose}>×</button><strong>{status.available ? `发现 v${status.version}` : `当前 v${status.currentVersion}`}</strong>{status.available && <><p>{status.releaseNotes?.trim() || "此版本未提供更新说明。"}</p><button className="button primary" type="button" disabled={installing} onClick={onInstall}>{installing ? "正在安装…" : "下载并安装"}</button></>}</section>}</div>;
+  return <div className="update-center" data-tauri-drag-region="false"><button className="text-button" type="button" disabled={!desktop || checking || installing} onClick={onCheck}>{checking ? "正在检查…" : "检查更新"}</button>{status && <section className="update-result" aria-live="polite"><button className="update-result-close" type="button" aria-label="关闭更新提示" onClick={onClose}>×</button><strong>{status.available ? `发现 v${status.version}` : `已是最新版本（v${status.currentVersion}）`}</strong>{status.available && <><p>{status.releaseNotes?.trim() || "此版本未提供更新说明。"}</p><button className="button primary" type="button" disabled={installing} onClick={onInstall}>{installing ? "正在安装…" : "下载并安装"}</button></>}</section>}</div>;
 }
 
 function SponsorAuthor({ open, onToggle, onClose }: { open: boolean; onToggle: () => void; onClose: () => void }) {
@@ -294,11 +324,11 @@ function TranslatedPage({ page, useWhiteMask, canvasRef, onLineChange }: { page:
   const placements = translatedPlacements(page);
   return <div className="translated-page" style={{ aspectRatio: `${page.width} / ${page.height}` }} aria-label={`第 ${page.number} 页译文，保留原始图片与版式`}>
     <canvas ref={canvasRef} aria-hidden="true" />
-    {useWhiteMask && placements.map((placement, index) => <span key={`mask-${placement.id}-${index}`} className="translated-text-mask" aria-hidden="true" style={{ left: `${placement.bbox.x / page.width * 100}%`, top: `${(page.height - placement.bbox.y - placement.bbox.height) / page.height * 100}%`, width: `${placement.bbox.width / page.width * 100}%`, height: `${placement.bbox.height / page.height * 100}%` }} />)}
+    {useWhiteMask && placements.map((placement, index) => <span key={`mask-${placement.id}-${index}`} className="translated-text-mask" aria-hidden="true" style={{ left: `${placement.bbox.x / page.width * 100}%`, top: `${placementTop(page.height, placement.bbox) / page.height * 100}%`, width: `${placement.bbox.width / page.width * 100}%`, height: `${placement.bbox.height / page.height * 100}%` }} />)}
     {placements.map((placement, index) => {
       const units = [...placement.text].reduce((total, character) => total + (character.charCodeAt(0) > 255 ? 1 : 0.55), 0.55);
       const fontSize = Math.max(0.35, Math.min(placement.fontSize / page.width * 100, placement.bbox.height / page.width * 100 / 1.15, placement.bbox.width / page.width * 100 / units));
-      return <textarea key={`${placement.id}-${index}`} className={`translated-line${useWhiteMask ? "" : " clean-background"}`} aria-label={`编辑第 ${page.number} 页译文`} dir={placement.direction === "rtl" ? "rtl" : "ltr"} rows={1} wrap="off" defaultValue={placement.text} onBlur={(event) => onLineChange(placement.lineId, event.currentTarget.value)} style={{ left: `${placement.bbox.x / page.width * 100}%`, top: `${(page.height - placement.bbox.y - placement.bbox.height) / page.height * 100}%`, width: `${placement.bbox.width / page.width * 100}%`, height: `${placement.bbox.height / page.height * 100}%`, fontSize: `${fontSize}cqw`, color: placement.color ?? "#263246", fontWeight: placement.bold ? 700 : undefined, fontStyle: placement.italic ? "italic" : undefined }} />;
+      return <textarea key={`${placement.id}-${index}`} className={`translated-line${useWhiteMask ? "" : " clean-background"}`} aria-label={`编辑第 ${page.number} 页译文`} dir={placement.direction === "rtl" ? "rtl" : "ltr"} rows={1} wrap="off" defaultValue={placement.text} onBlur={(event) => onLineChange(placement.lineId, event.currentTarget.value)} style={{ left: `${placement.bbox.x / page.width * 100}%`, top: `${placementTop(page.height, placement.bbox) / page.height * 100}%`, width: `${placement.bbox.width / page.width * 100}%`, height: `${placement.bbox.height / page.height * 100}%`, fontSize: `${fontSize}cqw`, color: placement.color ?? "#263246", fontWeight: placement.bold ? 700 : undefined, fontStyle: placement.italic ? "italic" : undefined }} />;
     })}
   </div>;
 }

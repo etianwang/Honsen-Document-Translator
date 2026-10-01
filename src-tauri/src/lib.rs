@@ -11,6 +11,44 @@ const UPDATE_REPOSITORY: &str = "etianwang/Honsen-PDF-Translator";
 const UPDATE_INSTALLER: &str = "Honsen-PDF-Translator-Setup.exe";
 const UPDATE_CHECKSUMS: &str = "SHA256SUMS.json";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const DOCX_TRANSLATION_SCRIPT: &str = r#"
+import json, os, sys, tempfile, urllib.parse, urllib.request
+from pdf2docx import Converter
+from docx import Document
+
+source, output, target, source_lang = sys.argv[1:]
+handle, temporary = tempfile.mkstemp(suffix='.docx'); os.close(handle)
+try:
+    converter = Converter(source); converter.convert(temporary); converter.close()
+    document = Document(temporary)
+    seen = set()
+    def paragraphs(parent):
+        for paragraph in parent.paragraphs: yield paragraph
+        for table in parent.tables:
+            for row in table.rows:
+                for cell in row.cells: yield from paragraphs(cell)
+    def keep(value):
+        value = value.strip()
+        return not value or all(character.isdigit() or character in ' .,:/%+-×xX' for character in value) or (len(value) <= 4 and all(character.isupper() or character == '.' for character in value))
+    items = []
+    for paragraph in paragraphs(document):
+        if id(paragraph._p) in seen: continue
+        seen.add(id(paragraph._p)); value = ''.join(run.text for run in paragraph.runs)
+        if paragraph.runs and not keep(value): items.append((paragraph, value))
+    endpoint = 'https://api-free.deepl.com/v2/translate' if os.environ['DEEPL_API_KEY'].endswith(':fx') else 'https://api.deepl.com/v2/translate'
+    for start in range(0, len(items), 50):
+        batch = items[start:start + 50]
+        fields = [('text', value) for _, value in batch] + [('target_lang', target)]
+        if source_lang: fields.append(('source_lang', source_lang))
+        request = urllib.request.Request(endpoint, data=urllib.parse.urlencode(fields).encode(), headers={'Authorization': 'DeepL-Auth-Key ' + os.environ['DEEPL_API_KEY']})
+        response = json.loads(urllib.request.urlopen(request, timeout=30).read())['translations']
+        for (paragraph, _), translation in zip(batch, response):
+            paragraph.runs[0].text = translation['text']
+            for run in paragraph.runs[1:]: run.text = ''
+    document.save(output)
+finally:
+    if os.path.exists(temporary): os.remove(temporary)
+"#;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,6 +103,17 @@ struct OcrPdfRequest {
 struct OcrPdfResponse {
     page_number: u32,
     text: Vec<OcrText>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WordTranslationRequest {
+    source_path: String,
+    output_path: String,
+    target_language: String,
+    source_language: Option<String>,
+    api_key: Option<String>,
+    format: String,
 }
 
 #[derive(Serialize)]
@@ -379,6 +428,52 @@ fn export_docx_to_pdf(docx_bytes: Vec<u8>, output_path: String) -> Result<(), St
     Ok(())
 }
 
+#[tauri::command]
+fn convert_source_pdf_to_docx(source_path: String, output_path: String) -> Result<(), String> {
+    let source = PathBuf::from(&source_path);
+    let output = PathBuf::from(&output_path);
+    if !has_extension(&source, "pdf") || !source.is_file() { return Err("PDF2DOCX_INVALID_INPUT: Source must be an existing PDF file.".into()); }
+    if !has_extension(&output, "docx") { return Err("PDF2DOCX_INVALID_OUTPUT: Output must use the .docx extension.".into()); }
+    let result = background_command("python")
+        .args(["-c", "from pdf2docx import Converter; import sys; converter = Converter(sys.argv[1]); converter.convert(sys.argv[2]); converter.close()", &source_path, &output_path])
+        .output()
+        .map_err(|_| "PDF2DOCX_UNAVAILABLE: Python or pdf2docx is unavailable.".to_owned())?;
+    if !result.status.success() || !output.is_file() || fs::metadata(&output).map_or(true, |metadata| metadata.len() == 0) {
+        return Err("PDF2DOCX_FAILED: pdf2docx conversion did not produce a DOCX file.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn translate_pdf_via_docx(request: WordTranslationRequest) -> Result<(), String> {
+    let source = PathBuf::from(&request.source_path);
+    let output = PathBuf::from(&request.output_path);
+    if !has_extension(&source, "pdf") || !source.is_file() { return Err("DOCX_ROUTE_INVALID_INPUT: Source must be an existing PDF file.".into()); }
+    if request.format != "docx" && request.format != "pdf" { return Err("DOCX_ROUTE_INVALID_OUTPUT: Unsupported export format.".into()); }
+    if !has_extension(&output, &request.format) { return Err("DOCX_ROUTE_INVALID_OUTPUT: Output extension does not match the selected format.".into()); }
+    let temporary_docx = std::env::temp_dir().join(format!("honsen-word-{}.docx", SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_millis()));
+    let docx_output = if request.format == "docx" { output.clone() } else { temporary_docx.clone() };
+    let key = deepl_key(request.api_key.as_deref())?;
+    let result = background_command("python")
+        .env("DEEPL_API_KEY", key)
+        .args(["-c", DOCX_TRANSLATION_SCRIPT, &request.source_path, docx_output.to_string_lossy().as_ref(), &request.target_language, request.source_language.as_deref().unwrap_or("")])
+        .output()
+        .map_err(|_| "DOCX_ROUTE_UNAVAILABLE: Python, pdf2docx, or python-docx is unavailable.".to_owned())?;
+    if !result.status.success() || !docx_output.is_file() || fs::metadata(&docx_output).map_or(true, |metadata| metadata.len() == 0) {
+        return Err("DOCX_ROUTE_FAILED: Word reconstruction or translation did not produce a DOCX file.".into());
+    }
+    if request.format == "pdf" {
+        let converted = export_docx_to_pdf(fs::read(&temporary_docx).map_err(|error| format!("DOCX_ROUTE_FAILED: {error}"))?, request.output_path);
+        let _ = fs::remove_file(&temporary_docx);
+        converted?;
+    }
+    Ok(())
+}
+
+fn has_extension(path: &std::path::Path, expected: &str) -> bool {
+    path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case(expected))
+}
+
 fn export_with_word(docx_path: &std::path::Path, pdf_path: &std::path::Path) -> Result<(), String> {
     let escape = |path: &std::path::Path| path.to_string_lossy().replace('\'', "''");
     let command = format!("$word = New-Object -ComObject Word.Application; $word.Visible = $false; try {{ $doc = $word.Documents.Open('{}', $false, $true); $doc.ExportAsFixedFormat('{}', 17); $doc.Close() }} finally {{ $word.Quit() }}", escape(docx_path), escape(pdf_path));
@@ -392,7 +487,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update, record_diagnostic])
+        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, convert_source_pdf_to_docx, translate_pdf_via_docx, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update, record_diagnostic])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -429,6 +524,13 @@ mod tests {
         assert_eq!(result.text[0].text, "Hello");
         assert_eq!(result.text[0].bbox.x, 60.0);
         assert_eq!(result.text[0].bbox.y, 780.0);
+    }
+
+    #[test]
+    fn accepts_only_pdf_to_docx_paths_for_source_conversion() {
+        assert!(has_extension(std::path::Path::new("input.PDF"), "pdf"));
+        assert!(has_extension(std::path::Path::new("output.docx"), "docx"));
+        assert!(!has_extension(std::path::Path::new("output.pdf"), "docx"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DocumentModel } from "@pdf-translator/document-model";
-import { paintTranslatedPlacement, translatedLineText, translatedLines, translatedPlacements } from "./pdf-overlay-export";
+import { paintTranslatedPlacement, placementTop, translatedLineText, translatedLines, translatedPlacements } from "./pdf-overlay-export";
 
 describe("translatedLines", () => {
   it("includes text and table-cell lines for coordinate-based PDF export", () => {
@@ -40,5 +40,15 @@ describe("translatedLines", () => {
     const line = { id: "line", bbox: { x: 0, y: 0, width: 10, height: 10 }, runs: [{ id: "run", bbox: { x: 0, y: 0, width: 10, height: 10 }, text: "P.U", translatedText: "", style: {} }] };
     const page = { number: 1, width: 10, height: 10, rotation: 0, margins: { top: 0, right: 0, bottom: 0, left: 0 }, blocks: [{ id: "text", type: "text" as const, bbox: line.bbox, readingOrder: 0, paragraphs: [{ id: "paragraph", bbox: line.bbox, alignment: "left" as const, lines: [line] }] }] };
     expect(translatedPlacements(page)).toEqual([]);
+  });
+
+  it("draws a source run only once when overlapping vector cells duplicate it", () => {
+    const line = { id: "line", bbox: { x: 0, y: 0, width: 10, height: 10 }, runs: [{ id: "run", bbox: { x: 0, y: 0, width: 10, height: 10 }, text: "Source", translatedText: "译文", style: {} }] };
+    const page = { number: 1, width: 10, height: 10, rotation: 0, margins: { top: 0, right: 0, bottom: 0, left: 0 }, blocks: [{ id: "table", type: "table" as const, bbox: line.bbox, readingOrder: 0, columnWidths: [10], style: {}, rows: [{ index: 0, cells: [{ rowIndex: 0, columnIndex: 0, bbox: line.bbox, content: [{ id: "first", bbox: line.bbox, alignment: "left" as const, lines: [line] }], style: {} }, { rowIndex: 0, columnIndex: 1, bbox: line.bbox, content: [{ id: "duplicate", bbox: line.bbox, alignment: "left" as const, lines: [{ ...line, id: "duplicate-line" }] }], style: {} }] }] }] };
+    expect(translatedPlacements(page)).toHaveLength(1);
+  });
+
+  it("uses the PDF text baseline to position the glyph box instead of shifting it upward", () => {
+    expect(placementTop(100, { x: 0, y: 80, width: 10, height: 10 })).toBeCloseTo(12.2);
   });
 });

@@ -3,6 +3,8 @@ import type { BoundingBox, DocumentModel, TextDirection, TextLine } from "@pdf-t
 import { renderCleanBackgroundPage } from "@pdf-translator/pdf-parser";
 
 const renderScale = 4;
+// PDF.js reports the text matrix at the baseline, not the bottom of the glyph box.
+const textBaselineDescent = 0.22;
 
 export interface RenderedTranslationPage { number: number; width: number; height: number; png: Uint8Array; }
 
@@ -43,8 +45,16 @@ export function translatedLineText(line: TextLine): string | undefined {
 
 export interface TranslatedPlacement { id: string; lineId: string; bbox: BoundingBox; text: string; direction?: TextDirection; fontSize: number; color?: string; bold?: boolean; italic?: boolean; }
 
+export function placementTop(pageHeight: number, bbox: BoundingBox): number {
+  return pageHeight - bbox.y - bbox.height * (1 - textBaselineDescent);
+}
+
 export function translatedPlacements(page: DocumentModel["pages"][number]): TranslatedPlacement[] {
+  const emittedSourceRuns = new Set<string>();
   return translatedLines(page).flatMap((line) => {
+    const sourceRuns = line.runs.map((run) => run.id).sort().join("|");
+    if (emittedSourceRuns.has(sourceRuns)) return [];
+    emittedSourceRuns.add(sourceRuns);
     const text = translatedLineText(line) ?? line.runs.map((run) => run.text).join("");
     if (!text.trim()) return [];
     const split = line.runs.slice(1).some((run) => Boolean(run.translatedText));
@@ -61,8 +71,8 @@ function placementForRun(run: TextLine["runs"][number], id: string, lineId: stri
 export function paintTranslatedPlacement(context: CanvasRenderingContext2D, placement: TranslatedPlacement, pageHeight: number, clearSourceText = true): void {
   const { bbox, text } = placement;
   const scale = context.canvas.height / pageHeight;
-  const padding = 2 * scale; const x = bbox.x * scale; const y = (pageHeight - bbox.y) * scale; const width = bbox.width * scale; const height = bbox.height * scale;
-  if (clearSourceText) { context.fillStyle = "#fff"; context.fillRect(x - padding, y - height - padding, width + padding * 2, height + padding * 2); }
+  const padding = 2 * scale; const x = bbox.x * scale; const top = placementTop(pageHeight, bbox) * scale; const width = bbox.width * scale; const height = bbox.height * scale;
+  if (clearSourceText) { context.fillStyle = "#fff"; context.fillRect(x - padding, top - padding, width + padding * 2, height + padding * 2); }
   if (!text.trim()) return;
   const sourceSize = placement.fontSize * scale;
   const innerHeight = Math.max(1, height - padding * 2);
@@ -70,7 +80,7 @@ export function paintTranslatedPlacement(context: CanvasRenderingContext2D, plac
   context.font = `${fontStyle}${sourceSize}px Arial, "Microsoft YaHei", sans-serif`;
   const fontSize = Math.max(1.5 * scale, Math.min(sourceSize, innerHeight / 1.15, width / context.measureText(text).width * sourceSize));
   context.font = `${fontStyle}${fontSize}px Arial, "Microsoft YaHei", sans-serif`;
-  const baseline = y - height + padding + (innerHeight - fontSize) / 2 + fontSize * 0.8;
+  const baseline = top + padding + (innerHeight - fontSize) / 2 + fontSize * 0.8;
   context.fillStyle = placement.color ?? "#000"; context.textBaseline = "alphabetic"; context.direction = placement.direction === "rtl" ? "rtl" : "ltr"; context.textAlign = placement.direction === "rtl" ? "right" : "left";
   context.fillText(text, placement.direction === "rtl" ? x + width - padding : x + padding, baseline, Math.max(1, width - padding * 2));
 }

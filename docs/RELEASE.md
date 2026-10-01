@@ -1,12 +1,12 @@
 # Release
 
-Current status: **v1.0.2 is an unsigned internal release**. The bundled Poppler/Tesseract Windows binaries have unresolved external-redistribution evidence; see [THIRD_PARTY_AUDIT.md](THIRD_PARTY_AUDIT.md).
+Current status: **v1.0.3 is an unsigned internal release**. The bundled Poppler/Tesseract Windows binaries have unresolved external-redistribution evidence; see [THIRD_PARTY_AUDIT.md](THIRD_PARTY_AUDIT.md).
 
 Before the next stable Windows release, set a SemVer version, application publisher, icon, and installer configuration; sign the resulting installer with the organization certificate; verify clean install, upgrade, uninstall, PDF export, and absence of secrets before publication. Telemetry is disabled by design.
 
 ## Windows installer and automatic updates
 
-Run `pnpm release:inno` to build the Tauri release binary, then create `Honsen-PDF-Translator-Setup.exe` with Inno Setup and its adjacent `SHA256SUMS.json`. Run `pnpm verify:installed-runtime` against that installer before upload. Upload exactly those two files to a non-draft GitHub Release whose tag is the release version, for example `v1.0.2`.
+Run `pnpm release:inno` to build the Tauri release binary, then create `Honsen-PDF-Translator-Setup.exe` with Inno Setup and its adjacent `SHA256SUMS.json`. Run `pnpm verify:installed-runtime` against that installer before upload. Upload exactly those two files to a non-draft GitHub Release whose tag is the release version, for example `v1.0.3`.
 
 Installed release builds check `etianwang/Honsen-PDF-Translator` on startup. A newer non-prerelease version is downloaded only when its published SHA-256 matches, then started with Inno Setup's silent switches. The installer always writes the stable `HonsenPdfTranslator.exe` name, explicitly deletes only the two named historical product executables, and creates only its own `Honsen PDF 翻译器` Start Menu/Desktop shortcuts. It never scans or changes unrelated shortcuts.
 
