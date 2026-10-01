@@ -4,16 +4,15 @@ import { renderCleanBackgroundPage } from "@pdf-translator/pdf-parser";
 
 const renderScale = 4;
 
-export async function exportTranslatedPdf(source: Uint8Array, model: DocumentModel): Promise<Uint8Array> {
+export async function exportTranslatedPdf(source: Uint8Array, model: DocumentModel, maskedPages: ReadonlySet<number> = new Set()): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   for (const pageModel of model.pages) {
     const canvas = document.createElement("canvas");
-    await renderCleanBackgroundPage(source.slice(), pageModel.number, canvas, undefined, renderScale);
+    const usedFallback = (await renderCleanBackgroundPage(source.slice(), pageModel.number, canvas, undefined, renderScale)) || maskedPages.has(pageModel.number);
     const context = canvas.getContext("2d");
     if (!context) throw new Error("PDF_EXPORT_FAILED: canvas renderer is unavailable.");
-    // PDF.js may report a clean background even when text is painted inside a form/annotation.
-    // Always clear the translated bbox so the export cannot overlay surviving source glyphs.
-    for (const placement of translatedPlacements(pageModel)) paintTranslatedPlacement(context, placement, pageModel.height, true);
+    // Match preview rendering: only OCR and pages where clean-background rendering failed need a white text mask.
+    for (const placement of translatedPlacements(pageModel)) paintTranslatedPlacement(context, placement, pageModel.height, usedFallback);
     const page = pdf.addPage([pageModel.width, pageModel.height]);
     page.drawImage(await pdf.embedPng(dataUrlBytes(canvas.toDataURL("image/png"))), { x: 0, y: 0, width: pageModel.width, height: pageModel.height });
   }

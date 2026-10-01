@@ -22,6 +22,14 @@ describe("translatedLines", () => {
     expect(fillText.mock.calls[0]?.[2]).toBeLessThan(360);
   });
 
+  it("does not paint a white source mask when using a clean background", () => {
+    const fillRect = vi.fn(); const fillText = vi.fn();
+    const context = { canvas: { width: 400, height: 400 }, font: "", fillStyle: "", textBaseline: "", direction: "ltr", textAlign: "left", measureText: () => ({ width: 20 }), fillRect, fillText } as unknown as CanvasRenderingContext2D;
+    paintTranslatedPlacement(context, { id: "line", lineId: "line", bbox: { x: 10, y: 10, width: 30, height: 10 }, text: "译文", fontSize: 10 }, 100, false);
+    expect(fillRect).not.toHaveBeenCalled();
+    expect(fillText).toHaveBeenCalledOnce();
+  });
+
   it("keeps an untranslated source line on the clean background", () => {
     const line = { id: "line", bbox: { x: 0, y: 0, width: 10, height: 10 }, runs: [{ id: "run", bbox: { x: 0, y: 0, width: 10, height: 10 }, text: "QTE", style: {} }] };
     const page = { number: 1, width: 10, height: 10, rotation: 0, margins: { top: 0, right: 0, bottom: 0, left: 0 }, blocks: [{ id: "text", type: "text" as const, bbox: line.bbox, readingOrder: 0, paragraphs: [{ id: "paragraph", bbox: line.bbox, alignment: "left" as const, lines: [line] }] }] };

@@ -167,7 +167,7 @@ function App() {
     try {
       setStage("generating-pdf"); setPhase("exporting-pdf"); setMessage("Generating PDF...");
       if (!sourceBytes) throw new Error("PDF_EXPORT_FAILED: 原始 PDF 数据不可用，请重新导入文件。");
-      await writeFile(path, await exportTranslatedPdf(sourceBytes, model));
+      await writeFile(path, await exportTranslatedPdf(sourceBytes, model, ocrPages));
       setStage("completed"); setPhase("review-translation"); setMessage("PDF exported.");
     } catch (error: unknown) {
       recordDiagnostic("pdf-export", error); setStage("failed"); setPhase("review-translation"); setMessage(userMessage(error, "PDF 导出失败，请重试。"));
