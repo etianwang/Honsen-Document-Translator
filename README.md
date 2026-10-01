@@ -2,6 +2,10 @@
 
 面向 Windows 的 PDF 翻译桌面应用。它会提取并重建 PDF 文字，调用 DeepL 翻译，并导出 DOCX 或保留版式的 PDF。
 
+## 界面示例
+
+![Honsen PDF 翻译器桌面界面](docs/design/desktop-preview.png)
+
 ## 配置
 
 复制 `.env.example` 为 `.env`，填写 DeepL API Key：
