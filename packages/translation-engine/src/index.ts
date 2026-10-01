@@ -36,8 +36,13 @@ function translationUnits(model: DocumentModel): Array<{ id: string; text: strin
     const images = page.blocks.filter((block) => block.type === "image").map((block) => block.bbox);
     return textLines({ ...model, pages: [page] }).flatMap((line) => (overlapsImage(line.bbox, images) || hasColumns(line))
       ? line.runs.map((run) => ({ id: run.id, text: run.text, elementIds: [run.id] }))
-      : [{ id: line.id, text: sourceText(line), elementIds: line.runs.map((run) => run.id) }]);
+      : [{ id: line.id, text: sourceText(line), elementIds: line.runs.map((run) => run.id) }]).filter((unit) => !keepSource(unit.text));
   });
+}
+
+function keepSource(text: string): boolean {
+  const value = text.trim();
+  return /^[\d\s.,:/%+-]+$/.test(value) || /^[A-Z.]{1,4}$/.test(value);
 }
 
 function overlapsImage(box: BoundingBox, images: BoundingBox[]): boolean {
