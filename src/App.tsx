@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readFile, writeFile } from "@tauri-apps/plugin-fs";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Packer } from "docx";
 import { buildDocx, validateDocx } from "@pdf-translator/docx-engine";
 import type { DocumentModel, DocumentPage, ParagraphModel, ProcessingStage } from "@pdf-translator/document-model";
 import { translateDocument } from "@pdf-translator/translation-engine";
 import { DocumentPipeline } from "@pdf-translator/document-pipeline";
-import { configurePdfWorker, renderCleanBackgroundPages } from "@pdf-translator/pdf-parser";
+import { configurePdfWorker, renderCleanBackgroundPages, renderPdfPage } from "@pdf-translator/pdf-parser";
 import { exportTranslatedPdf, translatedCellRegions, translatedPlacements } from "./pdf-overlay-export";
 import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
@@ -50,7 +50,6 @@ function App() {
   const isBusy = (stage: ProcessingStage): boolean => { void stage; return isWorkflowBusy(phase); };
   const [message, setMessage] = useState("No document loaded.");
   const [progress, setProgress] = useState(0);
-  const [originalUrl, setOriginalUrl] = useState<string>();
   const [sourceBytes, setSourceBytes] = useState<Uint8Array>();
   const [ocrPages, setOcrPages] = useState<Set<number>>(new Set());
   const [pageNumber, setPageNumber] = useState(1);
@@ -105,8 +104,6 @@ function App() {
       setModel(reconstructed);
       setOcrPages(new Set(result.analysis.pageTypes.filter((page) => page.type === "scanned").map((page) => page.pageNumber)));
       setSourceBytes(previewBytes);
-      if (!isTauri && originalUrl) URL.revokeObjectURL(originalUrl);
-      setOriginalUrl(isTauri ? convertFileSrc(path) : URL.createObjectURL(new Blob([previewBytes], { type: "application/pdf" })));
       setPageNumber(1); setZoom(1);
       setName(path.split(/[\\/]/).pop()); setStage("completed"); setPhase("review-source"); setProgress(0);
       setMessage(`已导入 ${pages.length} 页，请确认原文后点击开始翻译。`);
@@ -178,6 +175,11 @@ function App() {
     }
   }
 
+  function printTranslated(): void {
+    if (!model || !canExport(phase)) { setMessage("请先完成翻译并确认译文后再打印。"); return; }
+    window.print();
+  }
+
   async function docxBytes(): Promise<Uint8Array> {
     const blob = await Packer.toBlob(buildDocx(model!));
     const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -217,10 +219,10 @@ function App() {
     <section className="workspace" aria-label="PDF 翻译工作区">
       <article className="document-card">
         <div className="card-title"><h2>▧ 原始 PDF</h2><PageControls page={pageNumber} total={totalPages} zoom={zoom} onPage={setPageNumber} onZoom={setZoom} /></div>
-        {originalUrl ? <object className="pdf-viewer" data={`${originalUrl}#page=${pageNumber}`} type="application/pdf" aria-label={`原始 PDF 第 ${pageNumber} 页`} style={{ zoom }} /> : <EmptyPreview text="导入 PDF 后在这里查看原文" />}
+        {sourceBytes ? <OriginalPdfPreview sourceBytes={sourceBytes} pageNumber={pageNumber} zoom={zoom} /> : <EmptyPreview text="导入 PDF 后在这里查看原文" />}
       </article>
-      <article className="document-card">
-        <div className="card-title"><h2>▧ 译文（保留原页版式）</h2><ZoomControls zoom={zoom} onZoom={setZoom} /></div>
+      <article className="document-card translation-document-card">
+        <div className="card-title"><h2>▧ 译文（保留原页版式）</h2><div className="translation-actions"><ZoomControls zoom={zoom} onZoom={setZoom} /><button className="button secondary print-button" type="button" onClick={printTranslated} disabled={!model || isBusy(stage)}>打印译文</button></div></div>
         <div className="translation-editor" style={{ zoom }}>
           {phase === "review-translation" && model ? <TranslatedDocumentPreview sourceBytes={sourceBytes} pages={model.pages} maskedPages={ocrPages} onLineChange={commitLine} /> : <EmptyPreview text="确认原文后点击开始翻译；图片、签名和印章将保留在译文预览中。" />}
         </div>
@@ -238,6 +240,18 @@ function App() {
 }
 
 function EmptyPreview({ text }: { text: string }) { return <div className="empty-preview"><span>▧</span><p>{text}</p></div>; }
+
+function OriginalPdfPreview({ sourceBytes, pageNumber, zoom }: { sourceBytes: Uint8Array; pageNumber: number; zoom: number }) {
+  const canvas = useRef<HTMLCanvasElement>(null); const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const target = canvas.current; if (!target) return;
+    let cancelled = false; setFailed(false);
+    void renderPdfPage(sourceBytes.slice(), pageNumber, target, () => cancelled).catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [sourceBytes, pageNumber]);
+  if (failed) return <EmptyPreview text="原始 PDF 页面暂时无法渲染。" />;
+  return <div className="pdf-viewer" style={{ zoom }}><canvas ref={canvas} className="source-pdf-page" aria-label={`原始 PDF 第 ${pageNumber} 页`} /></div>;
+}
 
 function UpdateCenter({ status, checking, installing, desktop, onCheck, onInstall, onClose }: { status?: UpdateStatus; checking: boolean; installing: boolean; desktop: boolean; onCheck: () => void; onInstall: () => void; onClose: () => void }) {
   return <div className="update-center" data-tauri-drag-region="false"><button className="text-button" type="button" disabled={!desktop || checking || installing} onClick={onCheck}>{checking ? "正在检查…" : "检查更新"}</button>{status && <section className="update-result" aria-live="polite"><button className="update-result-close" type="button" aria-label="关闭更新提示" onClick={onClose}>×</button><strong>{status.available ? `发现 v${status.version}` : `当前 v${status.currentVersion}`}</strong>{status.available && <><p>{status.releaseNotes?.trim() || "此版本未提供更新说明。"}</p><button className="button primary" type="button" disabled={installing} onClick={onInstall}>{installing ? "正在安装…" : "下载并安装"}</button></>}</section>}</div>;
