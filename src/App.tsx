@@ -8,7 +8,7 @@ import { buildDocx, validateDocx } from "@pdf-translator/docx-engine";
 import type { DocumentModel, DocumentPage, ParagraphModel, ProcessingStage } from "@pdf-translator/document-model";
 import { translateDocument } from "@pdf-translator/translation-engine";
 import { DocumentPipeline } from "@pdf-translator/document-pipeline";
-import { configurePdfWorker, renderCleanBackgroundPages, renderPdfPage } from "@pdf-translator/pdf-parser";
+import { configurePdfWorker, renderCleanBackgroundPages, renderPdfPages } from "@pdf-translator/pdf-parser";
 import { exportTranslatedPdf, translatedCellRegions, translatedPlacements } from "./pdf-overlay-export";
 import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
@@ -52,7 +52,6 @@ function App() {
   const [progress, setProgress] = useState(0);
   const [sourceBytes, setSourceBytes] = useState<Uint8Array>();
   const [ocrPages, setOcrPages] = useState<Set<number>>(new Set());
-  const [pageNumber, setPageNumber] = useState(1);
   const [zoom, setZoom] = useState(1);
   const [targetLanguage, setTargetLanguage] = useState("ZH");
   const [sourceLanguage, setSourceLanguage] = useState("AUTO");
@@ -104,7 +103,7 @@ function App() {
       setModel(reconstructed);
       setOcrPages(new Set(result.analysis.pageTypes.filter((page) => page.type === "scanned").map((page) => page.pageNumber)));
       setSourceBytes(previewBytes);
-      setPageNumber(1); setZoom(1);
+      setZoom(1);
       setName(path.split(/[\\/]/).pop()); setStage("completed"); setPhase("review-source"); setProgress(0);
       setMessage(`已导入 ${pages.length} 页，请确认原文后点击开始翻译。`);
     } catch (error: unknown) {
@@ -209,7 +208,6 @@ function App() {
     setMessage("译文修改已应用，将随导出一并保存。");
   }
   const previewTerms = useMemo(() => glossaryEntries.slice(0, 3), [glossaryEntries]);
-  const totalPages = model?.pages.length ?? 0;
   const issues = model?.issues ?? [];
   return <main className="app-shell">
     <header className="app-header" data-tauri-drag-region><div className="brand" data-tauri-drag-region><img className="app-logo" src={appLogo} alt="" /><h1>Honsen PDF Translator</h1></div><span className="brand-note" data-tauri-drag-region>目前无AI加持，图片型PDF翻译成功率低。没有米子接入AI (ó﹏ò｡)</span><UpdateCenter status={updateStatus} checking={checkingUpdate} installing={installingUpdate} desktop={isTauri} onCheck={() => void checkForUpdate()} onInstall={() => void installUpdate()} onClose={() => setUpdateStatus(undefined)} /><SponsorAuthor open={sponsorOpen} onToggle={() => setSponsorOpen((open) => !open)} onClose={() => setSponsorOpen(false)} /><WindowControls /></header>
@@ -218,8 +216,8 @@ function App() {
     {issues.length > 0 && <section className="issue-card" aria-label="文档问题" role="alert"><strong>文档问题（{issues.length}）</strong><ul>{issues.map((issue) => <li key={`${issue.code}-${issue.pageNumber ?? 0}`}>{issue.message}</li>)}</ul></section>}
     <section className="workspace" aria-label="PDF 翻译工作区">
       <article className="document-card">
-        <div className="card-title"><h2>▧ 原始 PDF</h2><PageControls page={pageNumber} total={totalPages} zoom={zoom} onPage={setPageNumber} onZoom={setZoom} /></div>
-        {sourceBytes ? <OriginalPdfPreview sourceBytes={sourceBytes} pageNumber={pageNumber} zoom={zoom} /> : <EmptyPreview text="导入 PDF 后在这里查看原文" />}
+        <div className="card-title"><h2>▧ 原始 PDF</h2><ZoomControls zoom={zoom} onZoom={setZoom} /></div>
+        {sourceBytes && model ? <OriginalPdfPreview sourceBytes={sourceBytes} pages={model.pages} zoom={zoom} /> : <EmptyPreview text="导入 PDF 后在这里查看原文" />}
       </article>
       <article className="document-card translation-document-card">
         <div className="card-title"><h2>▧ 译文（保留原页版式）</h2><div className="translation-actions"><ZoomControls zoom={zoom} onZoom={setZoom} /><button className="button secondary print-button" type="button" onClick={printTranslated} disabled={!model || isBusy(stage)}>打印译文</button></div></div>
@@ -241,16 +239,19 @@ function App() {
 
 function EmptyPreview({ text }: { text: string }) { return <div className="empty-preview"><span>▧</span><p>{text}</p></div>; }
 
-function OriginalPdfPreview({ sourceBytes, pageNumber, zoom }: { sourceBytes: Uint8Array; pageNumber: number; zoom: number }) {
-  const canvas = useRef<HTMLCanvasElement>(null); const [failed, setFailed] = useState(false);
+function OriginalPdfPreview({ sourceBytes, pages, zoom }: { sourceBytes: Uint8Array; pages: DocumentPage[]; zoom: number }) {
+  const canvases = useRef(new Map<number, HTMLCanvasElement>()); const [failed, setFailed] = useState(false);
   useEffect(() => {
-    const target = canvas.current; if (!target) return;
+    const targets = pages.flatMap(({ number: pageNumber }) => {
+      const canvas = canvases.current.get(pageNumber);
+      return canvas ? [{ pageNumber, canvas }] : [];
+    });
     let cancelled = false; setFailed(false);
-    void renderPdfPage(sourceBytes.slice(), pageNumber, target, () => cancelled).catch(() => { if (!cancelled) setFailed(true); });
+    void renderPdfPages(sourceBytes.slice(), targets, () => cancelled).catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
-  }, [sourceBytes, pageNumber]);
+  }, [pages, sourceBytes]);
   if (failed) return <EmptyPreview text="原始 PDF 页面暂时无法渲染。" />;
-  return <div className="pdf-viewer" style={{ zoom }}><canvas ref={canvas} className="source-pdf-page" aria-label={`原始 PDF 第 ${pageNumber} 页`} /></div>;
+  return <div className="pdf-viewer" style={{ zoom }}><div className="source-document" aria-label="连续原始 PDF 预览">{pages.map(({ number: pageNumber }) => <canvas key={pageNumber} ref={(canvas) => { if (canvas) canvases.current.set(pageNumber, canvas); else canvases.current.delete(pageNumber); }} className="source-pdf-page" aria-label={`原始 PDF 第 ${pageNumber} 页`} />)}</div></div>;
 }
 
 function UpdateCenter({ status, checking, installing, desktop, onCheck, onInstall, onClose }: { status?: UpdateStatus; checking: boolean; installing: boolean; desktop: boolean; onCheck: () => void; onInstall: () => void; onClose: () => void }) {
@@ -309,7 +310,5 @@ function WindowControls() {
 function toDeepLSourceLanguage(language: string): string | undefined { return ({ ZH: "ZH", ZT: "ZH", EN: "EN", FR: "FR", ES: "ES", DE: "DE", PT: "PT", NL: "NL", TR: "TR", PL: "PL", NO: "NO", SV: "SV", FI: "FI", JA: "JA", KO: "KO", RU: "RU", UK: "UK", HU: "HU", AR: "AR" } as Record<string, string>)[language]; }
 
 function ZoomControls({ zoom, onZoom }: { zoom: number; onZoom: (value: (previous: number) => number) => void }) { return <div className="page-controls"><button type="button" aria-label="缩小" onClick={() => onZoom((value) => Math.max(0.75, value - 0.25))}>−</button><span>{Math.round(zoom * 100)}%</span><button type="button" aria-label="放大" onClick={() => onZoom((value) => Math.min(2, value + 0.25))}>＋</button></div>; }
-
-function PageControls({ page, total, zoom, onPage, onZoom }: { page: number; total: number; zoom: number; onPage: (value: number | ((previous: number) => number)) => void; onZoom: (value: (previous: number) => number) => void }) { return <div className="page-controls"><button type="button" aria-label="上一页" onClick={() => onPage((value) => Math.max(1, value - 1))} disabled={page <= 1}>‹</button><span>{total ? `${page} / ${total}` : "— / —"}</span><button type="button" aria-label="下一页" onClick={() => onPage((value) => Math.min(total, value + 1))} disabled={!total || page >= total}>›</button><button type="button" aria-label="缩小" onClick={() => onZoom((value) => Math.max(0.75, value - 0.25))}>−</button><span>{Math.round(zoom * 100)}%</span><button type="button" aria-label="放大" onClick={() => onZoom((value) => Math.min(2, value + 0.25))}>＋</button></div>; }
 
 export default App;
