@@ -7,7 +7,7 @@ AppId={{F0A4E014-4D3A-4AEE-B496-0A51895AA227}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=Honsen
-DefaultDirName={autopf}\Honsen Document Translator
+DefaultDirName={autopf}\Honsen Program\Honsen Document Translator
 DefaultGroupName=Honsen 文档翻译器
 DisableProgramGroupPage=yes
 UsePreviousGroup=no
@@ -28,7 +28,7 @@ chinesesimp.LaunchApplication=启动 Honsen 文档翻译器
 
 [Files]
 Source: "..\src-tauri\target\release\tauri-app.exe"; DestDir: "{app}"; DestName: "{#AppExeName}"; Flags: ignoreversion
-Source: "..\src-tauri\target\release\resources\*"; DestDir: "{app}\resources"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\src-tauri\resources\*"; DestDir: "{app}\resources"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
 ; Explicit product-owned legacy executable names only. Never scan user shortcut locations.

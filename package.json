@@ -1,7 +1,7 @@
 {
   "name": "pdf-translator-desktop",
   "private": true,
-  "version": "1.0.4",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,10 +15,12 @@
     "check:release-secrets": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/check-release-secrets.ps1",
     "write:release-checksums": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/write-release-checksums.ps1",
     "stage:libreoffice": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/stage-libreoffice.ps1",
+    "stage:python": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/stage-python.ps1",
+    "stage:runtimes": "pnpm stage:libreoffice && pnpm stage:python",
     "build:inno": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-inno-installer.ps1",
     "verify:installed-runtime": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-installed-runtime.ps1",
-    "release:inno": "pnpm tauri build && pnpm build:inno && pnpm write:release-checksums",
-    "tauri:portable": "pnpm stage:libreoffice && pnpm tauri build",
+    "release:inno": "pnpm stage:runtimes && pnpm tauri build && pnpm build:inno && pnpm write:release-checksums",
+    "tauri:portable": "pnpm stage:runtimes && pnpm tauri build",
     "tauri": "tauri"
   },
   "dependencies": {

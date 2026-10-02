@@ -1,12 +1,12 @@
 # Release
 
-Current status: **v1.0.4 is an unsigned internal release**. The bundled Poppler/Tesseract Windows binaries have unresolved external-redistribution evidence; see [THIRD_PARTY_AUDIT.md](THIRD_PARTY_AUDIT.md).
+Current status: **v2.0.0 is an unsigned internal release candidate**. It adds Office/text translation and a bundled Python standard-library runtime. The bundled Poppler/Tesseract Windows binaries have unresolved external-redistribution evidence; see [THIRD_PARTY_AUDIT.md](THIRD_PARTY_AUDIT.md).
 
-Before the next stable Windows release, set a SemVer version, application publisher, icon, and installer configuration; sign the resulting installer with the organization certificate; verify clean install, upgrade, uninstall, PDF export, and absence of secrets before publication. Telemetry is disabled by design.
+Before publication, verify clean install, upgrade, uninstall, PDF export and absence of secrets. This internal release is intentionally unsigned; Windows may show an unknown-publisher or SmartScreen prompt. Telemetry is disabled by design.
 
 ## Windows installer and automatic updates
 
-Run `pnpm release:inno` to build the Tauri release binary, then create the installer and its adjacent `SHA256SUMS.json`. Run `pnpm verify:installed-runtime` against that installer before upload. Upload exactly those two files to a non-draft GitHub Release whose tag is the release version, for example `v1.0.4`.
+Run `pnpm release:inno` to stage LibreOffice/Python, build the Tauri release binary, then create the installer and its adjacent `SHA256SUMS.json`. Run `pnpm verify:installed-runtime` against that installer before upload. Upload exactly those two files to a non-draft GitHub Release whose tag is the release version, for example `v2.0.0`.
 
 Installed release builds check `etianwang/Honsen-Document-Translator` on startup. A newer non-prerelease version is downloaded only when its published SHA-256 matches, then started with Inno Setup's silent switches. The installer retains its internal executable and asset names for update compatibility, while creating only its own `Honsen 文档翻译器` Start Menu/Desktop shortcuts. It never scans or changes unrelated shortcuts.
 

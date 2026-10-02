@@ -5,3 +5,5 @@ tmp/
 output/
 src-tauri/target/
 src-tauri/resources/libreoffice/
+src-tauri/resources/python/
+src-tauri/resources/scripts/__pycache__/

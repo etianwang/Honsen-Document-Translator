@@ -46,7 +46,8 @@ try {
   $tesseract = Join-Path $installRoot 'resources\bin\tesseract\tesseract.exe'
   $tessdata = Join-Path $installRoot 'resources\tessdata'
   $soffice = Join-Path $installRoot 'resources\libreoffice\program\soffice.exe'
-  foreach ($path in @($pdftoppm, $tesseract, (Join-Path $tessdata 'eng.traineddata'), $soffice)) {
+  $python = Join-Path $installRoot 'resources\python\python.exe'
+  foreach ($path in @($pdftoppm, $tesseract, (Join-Path $tessdata 'eng.traineddata'), $soffice, $python)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Missing bundled runtime: $path" }
   }
   $app = Join-Path $installRoot 'HonsenPdfTranslator.exe'
@@ -63,6 +64,8 @@ try {
   if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath "$imagePrefix.png")) { throw 'Bundled Poppler could not render the OCR fixture.' }
   $ocrText = & $tesseract "$imagePrefix.png" stdout --tessdata-dir $tessdata -l eng --psm 3
   if ($LASTEXITCODE -ne 0 -or ($ocrText -join "`n") -notmatch 'Fixture\s+title') { throw 'Bundled Tesseract did not recognize the OCR fixture.' }
+  & $python -c "import json, ssl, urllib.request, xml.etree.ElementTree, zipfile"
+  if ($LASTEXITCODE -ne 0) { throw 'Bundled Python could not load the document translator dependencies.' }
 
   & node (Join-Path $PSScriptRoot 'create-export-fixture.mjs') $docx
   if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $docx)) { throw 'Could not create the DOCX export fixture.' }
@@ -74,7 +77,7 @@ try {
   Stop-TestLibreOffice $installRoot
   if (-not (Test-Path -LiteralPath $pdf) -or (Get-Item -LiteralPath $pdf).Length -eq 0) { throw 'Bundled LibreOffice could not export the DOCX fixture.' }
 
-  Write-Host 'Installed-runtime verification passed: Inno install, bundled Poppler/Tesseract OCR, bundled LibreOffice PDF export, and uninstall.'
+  Write-Host 'Installed-runtime verification passed: Inno install, bundled Poppler/Tesseract OCR, bundled Python, bundled LibreOffice PDF export, and uninstall.'
 }
 finally {
   Stop-TestLibreOffice $installRoot

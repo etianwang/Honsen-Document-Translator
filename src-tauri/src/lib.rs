@@ -116,6 +116,31 @@ struct WordTranslationRequest {
     format: String,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GlossaryEntryRequest {
+    source: String,
+    target: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DocumentTranslationRequest {
+    source_path: String,
+    output_path: String,
+    source_type: String,
+    target_language: String,
+    source_language: Option<String>,
+    api_key: Option<String>,
+    glossary: Vec<GlossaryEntryRequest>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DocumentPreviewRequest {
+    source_path: String,
+}
+
 #[derive(Serialize)]
 struct OcrText {
     text: String,
@@ -323,6 +348,10 @@ fn libreoffice_path() -> PathBuf {
     bundled_resource("libreoffice/program/soffice.exe").unwrap_or_else(|| PathBuf::from("soffice"))
 }
 
+fn python_path() -> PathBuf {
+    bundled_resource("python/python.exe").unwrap_or_else(|| PathBuf::from("python"))
+}
+
 fn libreoffice_profile_dir(nonce: u128) -> Result<PathBuf, String> {
     let system_drive = std::env::var_os("SystemDrive").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("C:"));
     let profile = system_drive.join("Temp").join(format!("honsen-libreoffice-{nonce}"));
@@ -335,10 +364,23 @@ fn bundled_resource(relative: &str) -> Option<PathBuf> {
     let executable = std::env::current_exe().ok().and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
     [
         current.as_ref().map(|path| path.join("resources").join(relative)),
+        current.as_ref().map(|path| path.join("src-tauri/resources").join(relative)),
         current.as_ref().and_then(|path| path.parent().map(|parent| parent.join("src-tauri/resources").join(relative))),
         executable.as_ref().map(|path| path.join("resources").join(relative)),
         executable.as_ref().map(|path| path.join("resources/resources").join(relative)),
     ].into_iter().flatten().find(|path| path.is_file())
+}
+
+fn convert_legacy_office_document(source: &std::path::Path, output_directory: &std::path::Path, extension: &str) -> Result<PathBuf, String> {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_millis();
+    let profile = libreoffice_profile_dir(nonce)?;
+    let profile_arg = format!("-env:UserInstallation=file:///{}", profile.to_string_lossy().replace('\\', "/"));
+    let source_text = source.to_str().ok_or("DOCUMENT_INVALID_INPUT: invalid source path")?;
+    let directory_text = output_directory.to_str().ok_or("DOCUMENT_INVALID_INPUT: invalid temporary directory")?;
+    let status = background_command(libreoffice_path()).args(["--headless", &profile_arg, "--convert-to", extension, "--outdir", directory_text, source_text]).status();
+    let _ = fs::remove_dir_all(profile);
+    let output = output_directory.join(source.file_stem().ok_or("DOCUMENT_INVALID_INPUT: source has no file name")?).with_extension(extension);
+    if status.is_ok_and(|result| result.success()) && output.is_file() { Ok(output) } else { Err("DOCUMENT_CONVERSION_FAILED: LibreOffice could not convert the legacy Office document.".into()) }
 }
 
 fn tessdata_dir() -> Option<PathBuf> {
@@ -434,7 +476,7 @@ fn convert_source_pdf_to_docx(source_path: String, output_path: String) -> Resul
     let output = PathBuf::from(&output_path);
     if !has_extension(&source, "pdf") || !source.is_file() { return Err("PDF2DOCX_INVALID_INPUT: Source must be an existing PDF file.".into()); }
     if !has_extension(&output, "docx") { return Err("PDF2DOCX_INVALID_OUTPUT: Output must use the .docx extension.".into()); }
-    let result = background_command("python")
+    let result = background_command(python_path())
         .args(["-c", "from pdf2docx import Converter; import sys; converter = Converter(sys.argv[1]); converter.convert(sys.argv[2]); converter.close()", &source_path, &output_path])
         .output()
         .map_err(|_| "PDF2DOCX_UNAVAILABLE: Python or pdf2docx is unavailable.".to_owned())?;
@@ -454,7 +496,7 @@ fn translate_pdf_via_docx(request: WordTranslationRequest) -> Result<(), String>
     let temporary_docx = std::env::temp_dir().join(format!("honsen-word-{}.docx", SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_millis()));
     let docx_output = if request.format == "docx" { output.clone() } else { temporary_docx.clone() };
     let key = deepl_key(request.api_key.as_deref())?;
-    let result = background_command("python")
+    let result = background_command(python_path())
         .env("DEEPL_API_KEY", key)
         .args(["-c", DOCX_TRANSLATION_SCRIPT, &request.source_path, docx_output.to_string_lossy().as_ref(), &request.target_language, request.source_language.as_deref().unwrap_or("")])
         .output()
@@ -467,6 +509,79 @@ fn translate_pdf_via_docx(request: WordTranslationRequest) -> Result<(), String>
         let _ = fs::remove_file(&temporary_docx);
         converted?;
     }
+    Ok(())
+}
+
+#[tauri::command]
+fn translate_document_file(request: DocumentTranslationRequest) -> Result<(), String> {
+    let source = PathBuf::from(&request.source_path);
+    let output = PathBuf::from(&request.output_path);
+    if !source.is_file() { return Err("DOCUMENT_INVALID_INPUT: Source document does not exist.".into()); }
+    let (legacy_extension, output_extension, worker_type) = match request.source_type.as_str() {
+        "word" => ("doc", "docx", "word"),
+        "presentation" => ("ppt", "pptx", "presentation"),
+        "spreadsheet" => ("xls", "xlsx", "spreadsheet"),
+        "text" => ("", "txt", if has_extension(&source, "md") || has_extension(&source, "markdown") { "markdown" } else { "text" }),
+        _ => return Err("DOCUMENT_UNSUPPORTED_TYPE: Unsupported source document type.".into()),
+    };
+    let valid_input = if legacy_extension.is_empty() {
+        ["txt", "md", "markdown"].iter().any(|extension| has_extension(&source, extension))
+    } else {
+        [legacy_extension, output_extension].iter().any(|extension| has_extension(&source, extension))
+    };
+    if !valid_input { return Err("DOCUMENT_INVALID_INPUT: The selected file does not match its document type page.".into()); }
+    if !has_extension(&output, output_extension) && !(worker_type == "markdown" && has_extension(&output, "md")) {
+        return Err("DOCUMENT_INVALID_OUTPUT: The output file extension does not match the selected document type.".into());
+    }
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_millis();
+    let temporary_directory = std::env::temp_dir().join(format!("honsen-document-{nonce}"));
+    fs::create_dir_all(&temporary_directory).map_err(|error| format!("DOCUMENT_TEMPORARY_DIRECTORY_FAILED: {error}"))?;
+    let prepared_source = if !legacy_extension.is_empty() && has_extension(&source, legacy_extension) {
+        convert_legacy_office_document(&source, &temporary_directory, output_extension)?
+    } else { source.clone() };
+    let script = bundled_resource("scripts/translate_document.py").ok_or("DOCUMENT_TRANSLATOR_UNAVAILABLE: Translation worker was not found.")?;
+    let glossary = serde_json::to_string(&request.glossary).map_err(|_| "DOCUMENT_INVALID_REQUEST: Invalid glossary.".to_owned())?;
+    let key = deepl_key(request.api_key.as_deref())?;
+    let result = background_command(python_path()).env("DEEPL_API_KEY", key)
+        .args([script.to_string_lossy().as_ref(), prepared_source.to_string_lossy().as_ref(), request.output_path.as_str(), worker_type, request.target_language.as_str(), request.source_language.as_deref().unwrap_or(""), glossary.as_str()])
+        .output().map_err(|_| "DOCUMENT_TRANSLATOR_UNAVAILABLE: Python is unavailable.".to_owned());
+    let _ = fs::remove_dir_all(&temporary_directory);
+    let result = result?;
+    if !result.status.success() || !output.is_file() || fs::metadata(&output).map_or(true, |metadata| metadata.len() == 0) {
+        return Err("DOCUMENT_TRANSLATION_FAILED: Document translation did not produce an output file.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn render_document_preview(request: DocumentPreviewRequest) -> Result<String, String> {
+    let source = PathBuf::from(&request.source_path);
+    if !source.is_file() { return Err("DOCUMENT_INVALID_INPUT: Source document does not exist.".into()); }
+    if !["doc", "docx", "ppt", "pptx", "xls", "xlsx"].iter().any(|extension| has_extension(&source, extension)) {
+        return Err("DOCUMENT_PREVIEW_UNSUPPORTED: This document type has no PDF preview.".into());
+    }
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_millis();
+    let directory = std::env::temp_dir().join(format!("honsen-preview-{nonce}"));
+    fs::create_dir_all(&directory).map_err(|error| format!("DOCUMENT_PREVIEW_FAILED: {error}"))?;
+    let profile = libreoffice_profile_dir(nonce)?;
+    let profile_arg = format!("-env:UserInstallation=file:///{}", profile.to_string_lossy().replace('\\', "/"));
+    let directory_text = directory.to_str().ok_or("DOCUMENT_PREVIEW_FAILED: invalid temporary path")?;
+    let source_text = source.to_str().ok_or("DOCUMENT_PREVIEW_FAILED: invalid source path")?;
+    let status = background_command(libreoffice_path()).args(["--headless", &profile_arg, "--convert-to", "pdf", "--outdir", directory_text, source_text]).status();
+    let _ = fs::remove_dir_all(profile);
+    let preview = directory.join(source.file_stem().ok_or("DOCUMENT_PREVIEW_FAILED: source has no name")?).with_extension("pdf");
+    if status.is_ok_and(|result| result.success()) && preview.is_file() { Ok(preview.to_string_lossy().into_owned()) }
+    else { let _ = fs::remove_dir_all(directory); Err("DOCUMENT_PREVIEW_FAILED: Could not render document preview.".into()) }
+}
+
+#[tauri::command]
+fn release_document_preview(preview_path: String) -> Result<(), String> {
+    let preview = PathBuf::from(preview_path);
+    let Some(directory) = preview.parent() else { return Err("DOCUMENT_PREVIEW_INVALID: Invalid preview path.".into()); };
+    if !has_extension(&preview, "pdf") || !directory.file_name().is_some_and(|name| name.to_string_lossy().starts_with("honsen-preview-")) {
+        return Err("DOCUMENT_PREVIEW_INVALID: Invalid preview path.".into());
+    }
+    let _ = fs::remove_dir_all(directory);
     Ok(())
 }
 
@@ -487,7 +602,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, convert_source_pdf_to_docx, translate_pdf_via_docx, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update, record_diagnostic])
+        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, convert_source_pdf_to_docx, translate_pdf_via_docx, translate_document_file, render_document_preview, release_document_preview, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update, record_diagnostic])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

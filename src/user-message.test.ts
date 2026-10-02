@@ -7,6 +7,8 @@ describe("userMessage", () => {
       .toBe("DeepL API Key 无效，请检查后重试。");
     expect(userMessage(new Error("PDF_EXPORT_FAILED: C:\\secret\\source.pdf"), "导出失败。"))
       .toBe("PDF 导出失败，请重试；若仍失败请重新安装应用。");
+    expect(userMessage(new Error("DOCUMENT_INVALID_INPUT: wrong page"), "翻译失败。"))
+      .toBe("所选文件与当前文件类型不匹配，请重新选择。");
     expect(userMessage(new Error("unexpected internal detail"), "导出失败。"))
       .toBe("导出失败。");
     expect(diagnosticCode(new Error("PDF_EXPORT_FAILED: C:\\secret\\source.pdf"))).toBe("PDF_EXPORT_FAILED");
