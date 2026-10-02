@@ -1,12 +1,12 @@
-# Honsen PDF 翻译器
+# Honsen Document Translator
 
-面向 Windows 的 PDF 翻译桌面应用。它会提取并重建 PDF 文字，调用 DeepL 翻译，并导出保留版式的 PDF 或 DOCX。
+面向 Windows 的文档翻译桌面应用。当前支持导入 PDF、调用 DeepL 翻译，并导出保留版式的 PDF 或 DOCX；DOCX、PPTX 与 Markdown 导入翻译将作为后续格式扩展。
 
 DOCX 导出会嵌入已完成的译文页面图像，保证与应用预览一致；页内文字不可直接编辑。需要可编辑内容时，请使用译文预览中可编辑的文本后再导出 PDF。
 
 ## 界面示例
 
-![Honsen PDF 翻译器桌面界面](docs/design/desktop-preview.png)
+![Honsen Document Translator 桌面界面](docs/design/desktop-preview.png)
 
 ## 配置
 

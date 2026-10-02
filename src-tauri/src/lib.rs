@@ -7,7 +7,7 @@ const DEEPL_FREE_ENDPOINT: &str = "https://api-free.deepl.com/v2/translate";
 const DEEPL_PRO_ENDPOINT: &str = "https://api.deepl.com/v2/translate";
 const KEYRING_SERVICE: &str = "Honsen PDF Translator";
 const KEYRING_ACCOUNT: &str = "deepl-api-key";
-const UPDATE_REPOSITORY: &str = "etianwang/Honsen-PDF-Translator";
+const UPDATE_REPOSITORY: &str = "etianwang/Honsen-Document-Translator";
 const UPDATE_INSTALLER: &str = "Honsen-PDF-Translator-Setup.exe";
 const UPDATE_CHECKSUMS: &str = "SHA256SUMS.json";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -244,7 +244,7 @@ async fn latest_update() -> Result<Option<AvailableUpdate>, String> {
 }
 
 fn update_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder().user_agent("Honsen-PDF-Translator-Updater").timeout(Duration::from_secs(30)).build()
+    reqwest::Client::builder().user_agent("Honsen-Document-Translator-Updater").timeout(Duration::from_secs(30)).build()
         .map_err(|_| "UPDATE_CHECK_FAILED: Could not initialize updater client.".into())
 }
 

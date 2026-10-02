@@ -11,8 +11,8 @@
 
 ## 安装与 OCR
 
-1. 从 GitHub Release 下载 `Honsen-PDF-Translator-Setup.exe` 和 `SHA256SUMS.json`，校验下载文件的 SHA-256。
-2. 静默安装到临时目录，或通过图形安装器确认中文安装界面、桌面快捷方式和开始菜单名称均为“`Honsen PDF 翻译器`”。
+1. 从 GitHub Release 下载当前发布的安装包和 `SHA256SUMS.json`，校验下载文件的 SHA-256。
+2. 静默安装到临时目录，或通过图形安装器确认中文安装界面、桌面快捷方式和开始菜单名称均为“`Honsen 文档翻译器`”。
 3. 导入一份扫描报价单，选择对应 OCR 语言，确认能出现可编辑的识别结果且不会提示缺少 Poppler/Tesseract。
 4. 导入一份纯文字 PDF 与一份混合 PDF，确认导入失败时显示用户可理解的错误，且混合页的图片/签名未被 OCR 改写。
 

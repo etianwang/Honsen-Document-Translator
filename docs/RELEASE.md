@@ -6,9 +6,9 @@ Before the next stable Windows release, set a SemVer version, application publis
 
 ## Windows installer and automatic updates
 
-Run `pnpm release:inno` to build the Tauri release binary, then create `Honsen-PDF-Translator-Setup.exe` with Inno Setup and its adjacent `SHA256SUMS.json`. Run `pnpm verify:installed-runtime` against that installer before upload. Upload exactly those two files to a non-draft GitHub Release whose tag is the release version, for example `v1.0.4`.
+Run `pnpm release:inno` to build the Tauri release binary, then create the installer and its adjacent `SHA256SUMS.json`. Run `pnpm verify:installed-runtime` against that installer before upload. Upload exactly those two files to a non-draft GitHub Release whose tag is the release version, for example `v1.0.4`.
 
-Installed release builds check `etianwang/Honsen-PDF-Translator` on startup. A newer non-prerelease version is downloaded only when its published SHA-256 matches, then started with Inno Setup's silent switches. The installer always writes the stable `HonsenPdfTranslator.exe` name, explicitly deletes only the two named historical product executables, and creates only its own `Honsen PDF 翻译器` Start Menu/Desktop shortcuts. It never scans or changes unrelated shortcuts.
+Installed release builds check `etianwang/Honsen-Document-Translator` on startup. A newer non-prerelease version is downloaded only when its published SHA-256 matches, then started with Inno Setup's silent switches. The installer retains its internal executable and asset names for update compatibility, while creating only its own `Honsen 文档翻译器` Start Menu/Desktop shortcuts. It never scans or changes unrelated shortcuts.
 
 ## Binary distribution
 

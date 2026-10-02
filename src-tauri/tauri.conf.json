@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Honsen PDF Translator",
+  "productName": "Honsen Document Translator",
   "version": "1.0.4",
   "identifier": "com.pdftranslator.desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Honsen PDF Translator",
+        "title": "Honsen Document Translator",
         "width": 1480,
         "height": 800,
         "minWidth": 1480,

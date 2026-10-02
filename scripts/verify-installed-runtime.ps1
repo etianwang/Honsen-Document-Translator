@@ -20,6 +20,13 @@ function Stop-TestLibreOffice([string]$InstallRoot) {
   foreach ($process in $processes) { Wait-Process -Id $process.ProcessId -ErrorAction SilentlyContinue }
 }
 
+function Stop-TestApplication([string]$InstallRoot) {
+  $expected = Join-Path $InstallRoot 'HonsenPdfTranslator.exe'
+  $processes = @(Get-CimInstance Win32_Process -Filter "Name='HonsenPdfTranslator.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and $_.ExecutablePath -ieq $expected })
+  foreach ($process in $processes) { Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue }
+  foreach ($process in $processes) { Wait-Process -Id $process.ProcessId -ErrorAction SilentlyContinue }
+}
+
 function Remove-TestInstallRoot([string]$InstallRoot) {
   if (-not (Test-Path -LiteralPath $InstallRoot)) { return }
   $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\') + '\'
@@ -31,7 +38,8 @@ function Remove-TestInstallRoot([string]$InstallRoot) {
 }
 
 try {
-  $install = Start-Process -FilePath $installerPath -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$installRoot`"") -Wait -PassThru
+  $install = Start-Process -FilePath $installerPath -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$installRoot`"") -PassThru
+  $install.WaitForExit()
   if ($install.ExitCode -ne 0) { throw "Installer exited with code $($install.ExitCode)." }
 
   $pdftoppm = Join-Path $installRoot 'resources\bin\poppler\pdftoppm.exe'
@@ -41,6 +49,15 @@ try {
   foreach ($path in @($pdftoppm, $tesseract, (Join-Path $tessdata 'eng.traineddata'), $soffice)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Missing bundled runtime: $path" }
   }
+  $app = Join-Path $installRoot 'HonsenPdfTranslator.exe'
+  $deadline = (Get-Date).AddSeconds(15)
+  do {
+    $started = Get-CimInstance Win32_Process -Filter "Name='HonsenPdfTranslator.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and $_.ExecutablePath -ieq $app } | Select-Object -First 1
+    if ($started) { break }
+    Start-Sleep -Milliseconds 250
+  } while ((Get-Date) -lt $deadline)
+  if (-not $started) { throw 'Silent installer did not relaunch the application.' }
+  Stop-TestApplication $installRoot
 
   & $pdftoppm -f 1 -l 1 -r 300 -png -singlefile $fixturePath $imagePrefix
   if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath "$imagePrefix.png")) { throw 'Bundled Poppler could not render the OCR fixture.' }
@@ -61,6 +78,7 @@ try {
 }
 finally {
   Stop-TestLibreOffice $installRoot
+  Stop-TestApplication $installRoot
   $image = "$imagePrefix.png"
   if (Test-Path -LiteralPath $image) { Remove-Item -LiteralPath $image -Force }
   foreach ($path in @($docx, $pdf)) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
