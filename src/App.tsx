@@ -199,6 +199,17 @@ function App() {
     setMessage(validation.valid ? validation.message : "代码校验失败：" + validation.message);
   }
 
+  async function copyCode(text: string, label: string): Promise<void> {
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+      else {
+        const input = document.createElement("textarea"); input.value = text; document.body.append(input); input.select();
+        const copied = document.execCommand("copy"); input.remove(); if (!copied) throw new Error("clipboard unavailable");
+      }
+      setMessage(`${label}代码已复制。`);
+    } catch { setMessage("复制失败，请检查系统剪贴板权限。" ); }
+  }
+
   async function exportDocx(): Promise<void> {
     if (!isTauri) { setMessage("DOM 调试仅支持 PDF 解析预览，请在桌面应用中导出。"); return; }
     if (!model || !canExport(phase)) { setMessage("请先完成翻译并确认译文后再导出 DOCX。"); return; }
@@ -413,11 +424,11 @@ function App() {
     {issues.length > 0 && <section className="issue-card" aria-label="文档问题" role="alert"><strong>文档问题（{issues.length}）</strong><ul>{issues.map((issue) => <li key={`${issue.code}-${issue.pageNumber ?? 0}`}>{issue.message}</li>)}</ul></section>}
     <section className="workspace" aria-label="PDF 翻译工作区">
       <article className="document-card">
-        <div className="card-title"><h2>▧ 原始 {activeSourceType.label}</h2><div className="translation-actions"><ZoomControls zoom={sourceZoom} onZoom={setSourceZoom} />{sourceType === "pdf" && <button className="button secondary print-button" type="button" onClick={exportSourcePdfToDocx} disabled={!isTauri || !model || isBusy(stage)}>原 PDF → DOCX</button>}</div></div>
+        <div className="card-title"><h2>▧ 原始 {activeSourceType.label}</h2><div className="translation-actions">{sourceType === "code" && <button className="copy-code-button" type="button" aria-label="复制原始代码" title="复制原始代码" onClick={() => void copyCode(activeGenericDocument?.sourceText ?? "", "原始")}>⧉</button>}<ZoomControls zoom={sourceZoom} onZoom={setSourceZoom} />{sourceType === "pdf" && <button className="button secondary print-button" type="button" onClick={exportSourcePdfToDocx} disabled={!isTauri || !model || isBusy(stage)}>原 PDF → DOCX</button>}</div></div>
         {sourceBytes && model ? <OriginalPdfPreview sourceBytes={sourceBytes} pages={model.pages} zoom={sourceZoom} /> : activeGenericDocument?.sourcePreview ? <DocumentPdfPreview sourceBytes={activeGenericDocument.sourcePreview} label={"原始 " + activeSourceType.label} zoom={sourceZoom} /> : activeGenericDocument?.sourceText !== undefined ? sourceType === "code" ? <CodePreview text={activeGenericDocument.sourceText} zoom={sourceZoom} /> : <PlainTextPreview text={activeGenericDocument.sourceText} label={"原始 " + activeSourceType.label} zoom={sourceZoom} /> : <EmptyPreview text={activeGenericDocument?.sourcePath ? "已确认文件格式：" + (activeGenericDocument.name ?? "") : "导入 " + activeSourceType.label + " 后在这里查看原文"} />}
       </article>
       <article className="document-card translation-document-card">
-        <div className="card-title"><h2>▧ {sourceType === "pdf" ? "译文（保留原页版式）" : activeSourceType.label + " 译文"}</h2><div className="translation-actions">{sourceType === "code" && <button className="button secondary print-button" type="button" onClick={revalidateCode} disabled={!activeGenericDocument?.translatedPath || isBusy(stage)}>校验语法</button>}<ZoomControls zoom={translationZoom} onZoom={setTranslationZoom} />{sourceType === "pdf" && <button className="button secondary print-button" type="button" onClick={printTranslated} disabled={!model || isBusy(stage)}>打印译文</button>}</div></div>
+        <div className="card-title"><h2>▧ {sourceType === "pdf" ? "译文（保留原页版式）" : activeSourceType.label + " 译文"}</h2><div className="translation-actions">{sourceType === "code" && <><button className="button secondary print-button" type="button" onClick={revalidateCode} disabled={!activeGenericDocument?.translatedPath || isBusy(stage)}>校验语法</button><button className="copy-code-button" type="button" aria-label="复制译文代码" title="复制译文代码" onClick={() => void copyCode(activeGenericDocument?.translatedText ?? "", "译文")} disabled={!activeGenericDocument?.translatedText}>⧉</button></>}<ZoomControls zoom={translationZoom} onZoom={setTranslationZoom} />{sourceType === "pdf" && <button className="button secondary print-button" type="button" onClick={printTranslated} disabled={!model || isBusy(stage)}>打印译文</button>}</div></div>
         <div className="translation-editor">
           {sourceType === "code" && activeGenericDocument?.validation && <p className={`code-validation ${activeGenericDocument.validation.valid ? "valid" : "invalid"}`} role={activeGenericDocument.validation.valid ? "status" : "alert"}>{activeGenericDocument.validation.valid ? "●" : "⚠"} {activeGenericDocument.validation.message}</p>}
           {phase === "review-translation" && model ? <div className="preview-content" style={{ width: `${translationZoom * 100}%` }}><TranslatedDocumentPreview sourceBytes={sourceBytes} pages={model.pages} maskedPages={ocrPages} onLineChange={commitLine} /></div> : activeGenericDocument?.translatedPreview ? <DocumentPdfPreview sourceBytes={activeGenericDocument.translatedPreview} label={activeSourceType.label + " 译文"} zoom={translationZoom} /> : activeGenericDocument?.translatedText !== undefined ? sourceType === "code" ? <CodePreview text={activeGenericDocument.translatedText} zoom={translationZoom} /> : <PlainTextPreview text={activeGenericDocument.translatedText} label={activeSourceType.label + " 译文"} zoom={translationZoom} /> : <EmptyPreview text={sourceType === "pdf" ? "确认原文后点击开始翻译；图片、签名和印章将保留在译文预览中。" : phase === "review-translation" ? "译文已保存，但预览生成失败。" : "确认原文后点击开始翻译。"} />}
