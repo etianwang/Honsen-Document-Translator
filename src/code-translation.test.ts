@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyCodeTranslations, extractCodeSegments } from "./code-translation";
+import { applyCodeTranslations, extractCodeSegments, validateCodeText } from "./code-translation";
 
 describe("code translation extraction", () => {
   it("only replaces text in comments, literals, templates, and HTML content", () => {
@@ -29,5 +29,12 @@ describe("code translation extraction", () => {
   it("collects PHP markup text without changing the surrounding PHP code", () => {
     const source = '<?php $role = "admin"; ?> <h1>Welcome</h1>';
     expect(extractCodeSegments(source, "php").map((segment) => segment.text)).toEqual(["Welcome"]);
+  });
+
+  it("reports malformed structural syntax while ignoring braces in strings", () => {
+    expect(validateCodeText('const text = "{";', "ts").valid).toBe(true);
+    expect(validateCodeText("function broken() {", "ts")).toMatchObject({ valid: false });
+    expect(validateCodeText('{"title":"Welcome"}', "json").valid).toBe(true);
+    expect(validateCodeText('{"title":}', "json")).toMatchObject({ valid: false });
   });
 });

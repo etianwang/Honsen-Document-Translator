@@ -1,5 +1,6 @@
 export interface CodeSegment { id: string; start: number; end: number; text: string; }
 export interface CodeToken { kind: "plain" | "comment" | "string" | "keyword"; text: string; }
+export interface CodeValidation { valid: boolean; message: string; }
 
 const htmlExtensions = new Set(["html", "htm", "xml", "svg", "vue", "svelte", "jsx", "tsx", "resx", "xlf", "xliff"]);
 const keyValueExtensions = new Set(["properties", "yaml", "yml", "toml"]);
@@ -82,6 +83,23 @@ export function tokenizeCode(source: string): CodeToken[] {
   }
   if (cursor < source.length) pushPlain(source.slice(cursor));
   return tokens;
+}
+
+export function validateCodeText(source: string, extension: string): CodeValidation {
+  if (extension === "json") {
+    try { JSON.parse(source); return { valid: true, message: "JSON 语法校验通过。" }; }
+    catch (error) { return { valid: false, message: `JSON 语法错误：${error instanceof Error ? error.message : "无法解析"}` }; }
+  }
+  // ponytail: lexical validation catches structural damage without bundling a compiler per language; add language AST adapters only when a format needs semantic validation.
+  const plain = tokenizeCode(source).map((token) => token.kind === "plain" || token.kind === "keyword" ? token.text : " ".repeat(token.text.length)).join("");
+  const pairs: Record<string, string> = { ")": "(", "]": "[", "}": "{" }; const stack: Array<{ character: string; index: number }> = [];
+  for (let index = 0; index < plain.length; index += 1) {
+    const character = plain[index];
+    if (character === "(" || character === "[" || character === "{") stack.push({ character, index });
+    else if (character in pairs && stack.pop()?.character !== pairs[character]) return { valid: false, message: `结构符号不匹配：第 ${index + 1} 个字符附近。` };
+  }
+  if (stack.length) return { valid: false, message: `结构符号未闭合：第 ${stack[stack.length - 1].index + 1} 个字符附近。` };
+  return { valid: true, message: extension === "py" ? "结构校验通过，正在等待 Python 语法与缩进校验。" : "结构语法校验通过。" };
 }
 
 function findQuotedEnd(source: string, start: number, quote: string, quoteLength: number): number {

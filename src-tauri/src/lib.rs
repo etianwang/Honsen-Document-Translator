@@ -661,6 +661,19 @@ fn save_translated_text_file(source_path: String, content: String) -> Result<Str
 }
 
 #[tauri::command]
+fn validate_code_file(source_path: String) -> Result<(), String> {
+    let source = PathBuf::from(source_path);
+    if !source.is_file() { return Err("CODE_VALIDATION_FAILED: Source code file does not exist.".into()); }
+    if !has_extension(&source, "py") { return Ok(()); }
+    let script = "import ast, os, pathlib; ast.parse(pathlib.Path(os.environ['HONSEN_CODE_PATH']).read_text(encoding='utf-8-sig'))";
+    let result = background_command(python_path()).env("HONSEN_CODE_PATH", &source).args(["-c", script]).output()
+        .map_err(|_| "CODE_VALIDATION_FAILED: Python validation runtime is unavailable.".to_owned())?;
+    if result.status.success() { return Ok(()); }
+    let detail = String::from_utf8_lossy(&result.stderr).trim().chars().take(300).collect::<String>();
+    Err(format!("CODE_VALIDATION_FAILED: Python 语法或缩进错误。{}", if detail.is_empty() { String::new() } else { format!(" {detail}") }))
+}
+
+#[tauri::command]
 fn release_document_preview(preview_path: String) -> Result<(), String> {
     let preview = PathBuf::from(preview_path);
     let Some(directory) = preview.parent() else { return Err("DOCUMENT_PREVIEW_INVALID: Invalid preview path.".into()); };
@@ -710,7 +723,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, convert_source_pdf_to_docx, translate_pdf_via_docx, translate_document_file, render_document_preview, export_document_to_pdf, export_document_file, save_translated_text_file, release_document_preview, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update, record_diagnostic])
+        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, convert_source_pdf_to_docx, translate_pdf_via_docx, translate_document_file, render_document_preview, export_document_to_pdf, export_document_file, save_translated_text_file, validate_code_file, release_document_preview, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update, record_diagnostic])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -754,6 +767,14 @@ mod tests {
         assert!(has_extension(std::path::Path::new("input.PDF"), "pdf"));
         assert!(has_extension(std::path::Path::new("output.docx"), "docx"));
         assert!(!has_extension(std::path::Path::new("output.pdf"), "docx"));
+    }
+
+    #[test]
+    fn catches_python_indentation_errors() {
+        let path = std::env::temp_dir().join(format!("honsen-code-validation-{}.py", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        fs::write(&path, "if True:\nprint('missing indent')\n").unwrap();
+        assert!(validate_code_file(path.to_string_lossy().into_owned()).is_err());
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
