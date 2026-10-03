@@ -1,11 +1,22 @@
 # Honsen Document Translator
 
-面向 Windows 的文档翻译桌面应用。支持 PDF、Word（.doc/.docx）、PowerPoint（.ppt/.pptx）、Excel（.xls/.xlsx）、TXT 和 Markdown 的 DeepL 翻译。
+面向 Windows 的文档与代码翻译桌面应用。支持 PDF、Word（.doc/.docx）、PowerPoint（.ppt/.pptx）、Excel（.xls/.xlsx）、TXT、Markdown 和常用前后端代码文件的 DeepL 翻译。
 
 - Word 保留段落、表格、页眉和页脚结构；PowerPoint 翻译幻灯片与备注文字；Excel 只翻译普通文本单元格，不修改公式或合并单元格。
 - Office 文件在预览时临时转为 PDF；TXT 和 Markdown 直接预览。Markdown 保留代码块、行内代码、链接 URL 和图片路径，并翻译图片 alt 文本。
 
 DOCX 导出会嵌入已完成的译文页面图像，保证与应用预览一致；页内文字不可直接编辑。需要可编辑内容时，请使用译文预览中可编辑的文本后再导出 PDF。
+
+## 代码翻译
+
+代码页支持 HTML/XML/SVG、CSS/SCSS/LESS、JavaScript/TypeScript（含 JSX/TSX）、Vue、Svelte、PHP、Python、Java、C#、Go、Rust、C/C++、Kotlin、Swift、Dart、SQL、Shell/PowerShell，以及 JSON、YAML、TOML、`.properties`、`.resx`、XLIFF 和 PO 等资源文件。
+
+- 仅提取用户可见文案、注释和可安全替换的文本值；保留变量、函数、对象 key、CSS 选择器、类名、ID、URL、文件路径、模板表达式和 HTML 标签结构。
+- HTML 中只翻译可见文本与 `title`、`alt`、`placeholder`、`aria-label` 等属性值；`onclick` 等事件调用不会翻译。CSS 字体名称不会翻译。
+- Go struct tag、JSON/API 字段、SQL 语句、比较表达式中的协议枚举（包括 GeoJSON `Polygon`、`FeatureCollection` 等）会受到保护；`fmt.Errorf(...)` 等面向用户的错误提示仍可翻译。
+- 原始代码和译文均提供语法高亮、行号与一键复制。译文生成后自动执行结构检查；Python 额外通过内置 Python 进行真实语法与缩进校验。
+
+代码译文沿用原始扩展名导出，不生成 PDF。对于已经被其他工具污染的源代码，请先从版本控制或备份恢复原始文件，再执行翻译。
 
 ## 界面示例
 
