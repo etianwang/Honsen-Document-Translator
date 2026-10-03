@@ -5,6 +5,7 @@ export interface CodeValidation { valid: boolean; message: string; }
 const htmlExtensions = new Set(["html", "htm", "xml", "svg", "vue", "svelte", "jsx", "tsx", "resx", "xlf", "xliff"]);
 const keyValueExtensions = new Set(["properties", "yaml", "yml", "toml"]);
 const hashCommentExtensions = new Set(["py", "sh", "bash", "zsh", "ps1", "yaml", "yml", "toml"]);
+const protocolLiterals = new Set(["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon", "GeometryCollection", "Feature", "FeatureCollection"]);
 const keywords = /\b(?:abstract|as|async|await|break|case|catch|class|const|continue|def|do|else|enum|export|extends|final|finally|for|foreach|from|function|fun|if|implements|import|in|interface|let|match|namespace|new|null|package|private|protected|public|return|static|struct|switch|this|throw|try|type|use|val|var|void|while|with|yield)\b/g;
 
 export function codeLanguageForPath(path: string): string | undefined {
@@ -42,11 +43,12 @@ export function extractCodeSegments(source: string, extension: string): CodeSegm
     if (quote === "'" || quote === '"') {
       const triple = extension === "py" && source.slice(index, index + 3) === quote.repeat(3);
       const start = index + (triple ? 3 : 1); const close = findQuotedEnd(source, start, quote, triple ? 3 : 1);
-      if (!isMarkupAttributeValue(source, index) && !isObjectKey(source, close) && !isProtectedCodeValue(source, index) && !isFontValue(source, index, extension)) addLiteralContent(source, start, close, add);
+      if (!isMarkupAttributeValue(source, index) && !isObjectKey(source, close) && !isProtectedCodeValue(source, index) && !isMachineLiteral(source, start, close) && !isFontValue(source, index, extension)) addLiteralContent(source, start, close, add);
       index = Math.min(source.length, close + (triple ? 3 : 1)); continue;
     }
     if (quote === "`") {
       const end = findQuotedEnd(source, index + 1, "`", 1);
+      if (isGoStructTag(source.slice(index + 1, end), extension)) { index = Math.min(source.length, end + 1); continue; }
       if (isMarkupFragment(source.slice(index + 1, end))) addHtmlTextAndAttributes(source.slice(index + 1, end), (start, close, force) => add(index + 1 + start, index + 1 + close, force));
       else addTemplateParts(source, index + 1, end, add);
       index = Math.min(source.length, end + 1); continue;
@@ -120,6 +122,12 @@ function isMarkupAttributeValue(source: string, quoteIndex: number): boolean {
 
 function isObjectKey(source: string, close: number): boolean { return /^\s*:/.test(source.slice(close + 1)); }
 function isProtectedCodeValue(source: string, quoteIndex: number): boolean { return /(?:["']?(?:class|className|id|fontFamily|font-family)["']?\s*:\s*)$/i.test(source.slice(Math.max(0, quoteIndex - 80), quoteIndex)); }
+function isGoStructTag(value: string, extension: string): boolean { return extension === "go" && /^(?:\w+(?::"[^"\r\n]*"(?:,\w+)?)?\s*)+$/.test(value); }
+function isMachineLiteral(source: string, start: number, close: number): boolean {
+  const value = source.slice(start, close); const context = source.slice(Math.max(source.lastIndexOf("\n", start) + 1, start - 180), start);
+  return protocolLiterals.has(value) || /^\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WITH)\b/i.test(value)
+    || /(?:strings\.)?(?:EqualFold|Equal|HasPrefix|HasSuffix|Contains)\s*\([^()]*,\s*$/.test(context) || /(?:==|!=|case)\s*$/.test(context);
+}
 
 function isFontValue(source: string, quoteIndex: number, extension: string): boolean {
   if (!["css", "scss", "less", "html", "htm", "vue", "svelte", "jsx", "tsx"].includes(extension)) return false;

@@ -54,6 +54,11 @@ describe("code translation extraction", () => {
     expect(extractCodeSegments(source, "ts").map((segment) => segment.text)).toEqual(["Welcome"]);
   });
 
+  it("keeps Go protocol tags and enum literals while translating error messages", () => {
+    const source = 'type Feature struct { Properties map[string]any `json:"properties"` }\nif !strings.EqualFold(f.Geometry.Type, "Polygon") { continue }\nreturn "", fmt.Errorf("ring too short")';
+    expect(extractCodeSegments(source, "go").map((segment) => segment.text)).toEqual(["ring too short"]);
+  });
+
   it("reports malformed structural syntax while ignoring braces in strings", () => {
     expect(validateCodeText('const text = "{";', "ts").valid).toBe(true);
     expect(validateCodeText("function broken() {", "ts")).toMatchObject({ valid: false });
