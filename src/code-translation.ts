@@ -42,12 +42,14 @@ export function extractCodeSegments(source: string, extension: string): CodeSegm
     if (quote === "'" || quote === '"') {
       const triple = extension === "py" && source.slice(index, index + 3) === quote.repeat(3);
       const start = index + (triple ? 3 : 1); const close = findQuotedEnd(source, start, quote, triple ? 3 : 1);
-      if (!isEventHandlerValue(source, index) && !isFontValue(source, index, extension)) add(start, close);
+      if (!isMarkupAttributeValue(source, index) && !isObjectKey(source, close) && !isProtectedCodeValue(source, index) && !isFontValue(source, index, extension)) addLiteralContent(source, start, close, add);
       index = Math.min(source.length, close + (triple ? 3 : 1)); continue;
     }
     if (quote === "`") {
       const end = findQuotedEnd(source, index + 1, "`", 1);
-      addTemplateParts(source, index + 1, end, add); index = Math.min(source.length, end + 1); continue;
+      if (isMarkupFragment(source.slice(index + 1, end))) addHtmlTextAndAttributes(source.slice(index + 1, end), (start, close, force) => add(index + 1 + start, index + 1 + close, force));
+      else addTemplateParts(source, index + 1, end, add);
+      index = Math.min(source.length, end + 1); continue;
     }
     index += 1;
   }
@@ -111,15 +113,24 @@ function findQuotedEnd(source: string, start: number, quote: string, quoteLength
   return source.length;
 }
 
-function isEventHandlerValue(source: string, quoteIndex: number): boolean {
+function isMarkupAttributeValue(source: string, quoteIndex: number): boolean {
   const tagStart = source.lastIndexOf("<", quoteIndex);
-  return tagStart >= 0 && /\bon[a-z][\w:-]*\s*=\s*$/i.test(source.slice(tagStart, quoteIndex));
+  return tagStart > source.lastIndexOf(">", quoteIndex) && /\b[\w:-]+\s*=\s*$/.test(source.slice(tagStart, quoteIndex));
 }
+
+function isObjectKey(source: string, close: number): boolean { return /^\s*:/.test(source.slice(close + 1)); }
+function isProtectedCodeValue(source: string, quoteIndex: number): boolean { return /(?:["']?(?:class|className|id|fontFamily|font-family)["']?\s*:\s*)$/i.test(source.slice(Math.max(0, quoteIndex - 80), quoteIndex)); }
 
 function isFontValue(source: string, quoteIndex: number, extension: string): boolean {
   if (!["css", "scss", "less", "html", "htm", "vue", "svelte", "jsx", "tsx"].includes(extension)) return false;
   const declaration = source.slice(Math.max(source.lastIndexOf(";", quoteIndex), source.lastIndexOf("{", quoteIndex), source.lastIndexOf("}", quoteIndex)) + 1, quoteIndex);
   return /^\s*(?:font|font-family|font-display|font-feature-settings|font-variation-settings)\s*:/i.test(declaration);
+}
+
+function isMarkupFragment(value: string): boolean { return /<\/?[a-z][^>]*>/i.test(value); }
+function addLiteralContent(source: string, start: number, end: number, add: (start: number, end: number, force?: boolean) => void): void {
+  if (isMarkupFragment(source.slice(start, end))) addHtmlTextAndAttributes(source.slice(start, end), (innerStart, innerEnd, force) => add(start + innerStart, start + innerEnd, force));
+  else add(start, end);
 }
 
 function addTemplateParts(source: string, start: number, end: number, add: (start: number, end: number, force?: boolean) => void): void {
@@ -152,7 +163,9 @@ function addHtmlTextAndAttributes(source: string, add: (start: number, end: numb
     if (/^<\/?(?:script|style)\b/i.test(value)) insideCode = !/^<\//.test(value);
     const attributes = /\b(?:alt|title|placeholder|aria-label|aria-description|data-tooltip)\s*=\s*(["'])([\s\S]*?)\1/gi;
     for (let attribute = attributes.exec(value); attribute; attribute = attributes.exec(value)) {
-      const textOffset = attribute.index + attribute[0].lastIndexOf(attribute[2]); add(match.index + textOffset, match.index + textOffset + attribute[2].length, true);
+      if (!attribute[2].includes("${")) {
+        const textOffset = attribute.index + attribute[0].lastIndexOf(attribute[2]); add(match.index + textOffset, match.index + textOffset + attribute[2].length, true);
+      }
     }
     previousEnd = match.index + value.length; seenTag = true;
   }

@@ -38,6 +38,22 @@ describe("code translation extraction", () => {
     expect(extractCodeSegments(html, "html").map((segment) => segment.text)).toEqual(["Welcome"]);
   });
 
+  it("parses markup inside templates without translating structure or class names", () => {
+    const source = "return `<div class=\"modal wide\" onclick=\"setRole('designer')\" title=\"Open modal\">${subsHtml}<span>Welcome</span></div>`;";
+    const segments = extractCodeSegments(source, "ts");
+    expect(segments.map((segment) => segment.text)).toEqual(["Open modal", "Welcome"]);
+    const translated = applyCodeTranslations(source, segments, new Map(segments.map((segment) => [segment.id, `JA:${segment.text}`])));
+    expect(translated).toContain('class="modal wide"');
+    expect(translated).toContain("onclick=\"setRole('designer')\"");
+    expect(translated).toContain("${subsHtml}");
+    expect(translated).toContain("</span></div>");
+  });
+
+  it("keeps object keys and class-valued settings out of translation", () => {
+    const source = 'const config = { "title": "Welcome", class: "modal wide", fontFamily: "Inter" };';
+    expect(extractCodeSegments(source, "ts").map((segment) => segment.text)).toEqual(["Welcome"]);
+  });
+
   it("reports malformed structural syntax while ignoring braces in strings", () => {
     expect(validateCodeText('const text = "{";', "ts").valid).toBe(true);
     expect(validateCodeText("function broken() {", "ts")).toMatchObject({ valid: false });
