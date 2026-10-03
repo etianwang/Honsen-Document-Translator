@@ -474,7 +474,12 @@ function PlainTextPreview({ text, label, zoom }: { text: string; label: string; 
 }
 
 function CodePreview({ text, zoom }: { text: string; zoom: number }) {
-  return <div className="code-preview"><pre style={{ width: `${zoom * 100}%` }} aria-label="代码预览"><code>{tokenizeCode(text).map((token, index) => <span key={index} className={`code-${token.kind}`}>{token.text}</span>)}</code></pre></div>;
+  const lines: ReturnType<typeof tokenizeCode>[] = [[]];
+  for (const token of tokenizeCode(text)) for (const part of token.text.split(/(\n)/)) {
+    if (part === "\n") lines.push([]);
+    else if (part) lines[lines.length - 1].push({ ...token, text: part });
+  }
+  return <div className="code-preview"><pre style={{ width: `${zoom * 100}%` }} aria-label="代码预览"><code>{lines.map((line, index) => <span className="code-line" key={index}><span className="code-line-number" aria-hidden="true">{index + 1}</span><span>{line.map((token, tokenIndex) => <span key={tokenIndex} className={`code-${token.kind}`}>{token.text}</span>)}</span></span>)}</code></pre></div>;
 }
 
 function UpdateCenter({ status, checking, installing, desktop, onCheck, onInstall, onClose }: { status?: UpdateStatus; checking: boolean; installing: boolean; desktop: boolean; onCheck: () => void; onInstall: () => void; onClose: () => void }) {
