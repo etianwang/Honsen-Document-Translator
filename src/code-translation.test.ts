@@ -1,0 +1,33 @@
+import { describe, expect, it } from "vitest";
+import { applyCodeTranslations, extractCodeSegments } from "./code-translation";
+
+describe("code translation extraction", () => {
+  it("only replaces text in comments, literals, templates, and HTML content", () => {
+    const source = 'const userName = `Hello ${name}`; // Welcome user\n<div title="Open document">Hello world</div>';
+    const segments = extractCodeSegments(source, "tsx");
+    const translated = applyCodeTranslations(source, segments, new Map(segments.map((segment) => [segment.id, `ZH:${segment.text}`])));
+    expect(translated).toContain("const userName");
+    expect(translated).toContain('`ZH:Hello ${name}`');
+    expect(translated).toContain("//ZH: Welcome user");
+    expect(translated).toContain('title="ZH:Open document"');
+    expect(translated).toContain(">ZH:Hello world<");
+  });
+
+  it("keeps code-like string values unchanged", () => {
+    const source = 'const route = "/api/v1/users"; const key = "user_name";';
+    expect(extractCodeSegments(source, "ts")).toHaveLength(0);
+  });
+
+  it("translates configuration values but not keys or JSX expressions", () => {
+    const yaml = 'page_title: Welcome home\napi_path: /api/v1/users\n';
+    const yamlSegments = extractCodeSegments(yaml, "yaml");
+    expect(yamlSegments.map((segment) => segment.text)).toEqual(["Welcome home"]);
+    const jsx = '<p>Hello {userName}</p>';
+    expect(extractCodeSegments(jsx, "tsx").map((segment) => segment.text)).toEqual(["Hello "]);
+  });
+
+  it("collects PHP markup text without changing the surrounding PHP code", () => {
+    const source = '<?php $role = "admin"; ?> <h1>Welcome</h1>';
+    expect(extractCodeSegments(source, "php").map((segment) => segment.text)).toEqual(["Welcome"]);
+  });
+});

@@ -648,6 +648,19 @@ async fn export_document_file(source_path: String, output_path: String) -> Resul
 }
 
 #[tauri::command]
+fn save_translated_text_file(source_path: String, content: String) -> Result<String, String> {
+    let source = PathBuf::from(source_path);
+    if !source.is_file() { return Err("DOCUMENT_INVALID_INPUT: Source document does not exist.".into()); }
+    let extension = source.extension().and_then(|value| value.to_str()).filter(|value| !value.is_empty()).ok_or("DOCUMENT_INVALID_INPUT: Source file has no extension.")?;
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_millis();
+    let directory = std::env::temp_dir().join(format!("honsen-translated-{nonce}"));
+    fs::create_dir_all(&directory).map_err(|error| format!("DOCUMENT_TEMPORARY_DIRECTORY_FAILED: {error}"))?;
+    let output = directory.join(source.file_stem().ok_or("DOCUMENT_INVALID_INPUT: Source file has no name.")?).with_extension(extension);
+    fs::write(&output, content).map_err(|error| format!("DOCUMENT_EXPORT_FAILED: {error}"))?;
+    Ok(output.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 fn release_document_preview(preview_path: String) -> Result<(), String> {
     let preview = PathBuf::from(preview_path);
     let Some(directory) = preview.parent() else { return Err("DOCUMENT_PREVIEW_INVALID: Invalid preview path.".into()); };
@@ -697,7 +710,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, convert_source_pdf_to_docx, translate_pdf_via_docx, translate_document_file, render_document_preview, export_document_to_pdf, export_document_file, release_document_preview, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update, record_diagnostic])
+        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, convert_source_pdf_to_docx, translate_pdf_via_docx, translate_document_file, render_document_preview, export_document_to_pdf, export_document_file, save_translated_text_file, release_document_preview, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update, record_diagnostic])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

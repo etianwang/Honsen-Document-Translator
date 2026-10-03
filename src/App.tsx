@@ -6,7 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Packer } from "docx";
 import { buildVisualDocx, validateDocx } from "@pdf-translator/docx-engine";
-import type { DocumentModel, DocumentPage, ParagraphModel, ProcessingStage } from "@pdf-translator/document-model";
+import type { DocumentModel, DocumentPage, ParagraphModel, ProcessingStage, TranslationSegment } from "@pdf-translator/document-model";
 import { translateDocument } from "@pdf-translator/translation-engine";
 import { DocumentPipeline } from "@pdf-translator/document-pipeline";
 import { configurePdfWorker, parsePdf, renderCleanBackgroundPages, renderPdfPages } from "@pdf-translator/pdf-parser";
@@ -23,6 +23,7 @@ import sponsorAlipay from "./assets/sponsor-alipay.jpg";
 import defaultGlossaryYaml from "./assets/default-glossary.yaml?raw";
 import { acceptsSourceFile, exportFileName, sourceTypes, type SourceType } from "./source-types";
 import { addDocumentPdfPadding } from "./document-pdf-padding";
+import { applyCodeTranslations, codeLanguageForPath, extractCodeSegments, tokenizeCode } from "./code-translation";
 import "./App.css";
 
 configurePdfWorker(pdfWorkerUrl);
@@ -156,7 +157,7 @@ function App() {
     setPhase("importing"); setStage("analyzing"); setProgress(0); setMessage("正在读取并生成 " + type.label + " 预览…");
     try {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      if (sourceType === "text") {
+      if (sourceType === "text" || sourceType === "code") {
         const sourceText = decodePreviewText(await readFile(path));
         setGenericDocuments((documents) => ({ ...documents, [sourceType]: { ...documents[sourceType], sourceText } }));
       }
@@ -218,19 +219,36 @@ function App() {
       try {
         if (apiKey.trim() && rememberKey) setKeyStatus(await invoke<DeepLKeyStatus>("save_deepl_api_key", { request: { apiKey, remember: true } }));
         setStage("translating"); setPhase("translating"); setProgress(0); setMessage("正在翻译 " + type.label + "…");
-        const output = await invoke<string>("translate_document_file", { request: { sourcePath: document.sourcePath, outputPath: "", sourceType, targetLanguage, sourceLanguage: toDeepLSourceLanguage(sourceLanguage), apiKey: apiKey.trim() || undefined, glossary: glossaryEntries } });
-        if (sourceType === "text") {
-          const translatedText = decodePreviewText(await readFile(output));
+        if (sourceType === "code") {
+          const extension = codeLanguageForPath(document.sourcePath);
+          const sourceText = document.sourceText ?? decodePreviewText(await readFile(document.sourcePath));
+          if (!extension) throw new Error("DOCUMENT_INVALID_INPUT: 不支持的代码文件类型。");
+          const codeSegments = extractCodeSegments(sourceText, extension);
+          const controller = new AbortController(); activeAbortController.current = controller;
+          const segments: TranslationSegment[] = codeSegments.map((segment) => ({ id: segment.id, sourceText: segment.text, targetLanguage, sourceLanguage: toDeepLSourceLanguage(sourceLanguage), elementIds: [segment.id] }));
+          const result = await new TauriDeepLTranslator(apiKey.trim() || undefined, undefined, toDeepLSourceLanguage(sourceLanguage)).translate({ segments }, { signal: controller.signal, onProgress: (completed, total) => { setProgress(total ? Math.round(completed / total * 100) : 100); setMessage(total ? `正在翻译代码文本：${completed}/${total} 段` : "没有可翻译的代码文本。"); } });
+          const glossary = new Map(glossaryEntries.map((entry) => [entry.source.trim(), entry.target.trim()]));
+          const translations = new Map(result.translations.map((translation) => [translation.segmentId, glossary.get(codeSegments.find((segment) => segment.id === translation.segmentId)?.text.trim() ?? "") ?? translation.translatedText]));
+          const translatedText = applyCodeTranslations(sourceText, codeSegments, translations);
+          const output = await invoke<string>("save_translated_text_file", { sourcePath: document.sourcePath, content: translatedText });
           setGenericDocuments((documents) => ({ ...documents, [sourceType]: { ...documents[sourceType], translatedPath: output, translatedText } }));
+          activeAbortController.current = undefined;
         }
         else {
+          const output = await invoke<string>("translate_document_file", { request: { sourcePath: document.sourcePath, outputPath: "", sourceType, targetLanguage, sourceLanguage: toDeepLSourceLanguage(sourceLanguage), apiKey: apiKey.trim() || undefined, glossary: glossaryEntries } });
+          if (sourceType === "text") {
+          const translatedText = decodePreviewText(await readFile(output));
+          setGenericDocuments((documents) => ({ ...documents, [sourceType]: { ...documents[sourceType], translatedPath: output, translatedText } }));
+          }
+          else {
           const translatedPreview = await renderDocumentPreview(output);
           setGenericDocuments((documents) => ({ ...documents, [sourceType]: { ...documents[sourceType], translatedPath: output, translatedPreview } }));
+          }
         }
         setProgress(100); setStage("completed"); setPhase("review-translation"); setMessage("翻译完成，请点击右侧按钮导出文件。");
       } catch (error: unknown) {
         recordDiagnostic("translation", error); setStage("failed"); setPhase("review-source"); setMessage(userMessage(error, type.label + " 翻译失败，请重试。"));
-      }
+      } finally { activeAbortController.current = undefined; }
       return;
     }
     if (!model || !canTranslate(phase)) { setMessage("请先导入并确认原文后再开始翻译。"); return; }
@@ -291,7 +309,7 @@ function App() {
     const type = sourceTypes.find((item) => item.id === sourceType)!;
     const document = genericDocuments[sourceType];
     if (!isTauri || !document?.translatedPath) { setMessage("请先完成翻译并确认译文后再导出。"); return; }
-    const extension = type.id === "text" && /\.md(?:own)?$/i.test(document.sourcePath ?? "") ? "md" : type.outputExtension;
+    const extension = type.id === "code" ? document.sourcePath?.split(".").pop()?.toLowerCase() || type.outputExtension : type.id === "text" && /\.md(?:own)?$/i.test(document.sourcePath ?? "") ? "md" : type.outputExtension;
     const path = await save({ defaultPath: exportFileName(document.sourcePath, targetLanguage, type), filters: [{ name: type.label + " 译文", extensions: [extension] }] });
     if (!path) return;
     try {
@@ -370,12 +388,12 @@ function App() {
     <section className="workspace" aria-label="PDF 翻译工作区">
       <article className="document-card">
         <div className="card-title"><h2>▧ 原始 {activeSourceType.label}</h2><div className="translation-actions"><ZoomControls zoom={sourceZoom} onZoom={setSourceZoom} />{sourceType === "pdf" && <button className="button secondary print-button" type="button" onClick={exportSourcePdfToDocx} disabled={!isTauri || !model || isBusy(stage)}>原 PDF → DOCX</button>}</div></div>
-        {sourceBytes && model ? <OriginalPdfPreview sourceBytes={sourceBytes} pages={model.pages} zoom={sourceZoom} /> : activeGenericDocument?.sourcePreview ? <DocumentPdfPreview sourceBytes={activeGenericDocument.sourcePreview} label={"原始 " + activeSourceType.label} zoom={sourceZoom} /> : activeGenericDocument?.sourceText !== undefined ? <PlainTextPreview text={activeGenericDocument.sourceText} label={"原始 " + activeSourceType.label} zoom={sourceZoom} /> : <EmptyPreview text={activeGenericDocument?.sourcePath ? "已确认文件格式：" + (activeGenericDocument.name ?? "") : "导入 " + activeSourceType.label + " 后在这里查看原文"} />}
+        {sourceBytes && model ? <OriginalPdfPreview sourceBytes={sourceBytes} pages={model.pages} zoom={sourceZoom} /> : activeGenericDocument?.sourcePreview ? <DocumentPdfPreview sourceBytes={activeGenericDocument.sourcePreview} label={"原始 " + activeSourceType.label} zoom={sourceZoom} /> : activeGenericDocument?.sourceText !== undefined ? sourceType === "code" ? <CodePreview text={activeGenericDocument.sourceText} zoom={sourceZoom} /> : <PlainTextPreview text={activeGenericDocument.sourceText} label={"原始 " + activeSourceType.label} zoom={sourceZoom} /> : <EmptyPreview text={activeGenericDocument?.sourcePath ? "已确认文件格式：" + (activeGenericDocument.name ?? "") : "导入 " + activeSourceType.label + " 后在这里查看原文"} />}
       </article>
       <article className="document-card translation-document-card">
         <div className="card-title"><h2>▧ {sourceType === "pdf" ? "译文（保留原页版式）" : activeSourceType.label + " 译文"}</h2><div className="translation-actions"><ZoomControls zoom={translationZoom} onZoom={setTranslationZoom} />{sourceType === "pdf" && <button className="button secondary print-button" type="button" onClick={printTranslated} disabled={!model || isBusy(stage)}>打印译文</button>}</div></div>
         <div className="translation-editor">
-          {phase === "review-translation" && model ? <div className="preview-content" style={{ width: `${translationZoom * 100}%` }}><TranslatedDocumentPreview sourceBytes={sourceBytes} pages={model.pages} maskedPages={ocrPages} onLineChange={commitLine} /></div> : activeGenericDocument?.translatedPreview ? <DocumentPdfPreview sourceBytes={activeGenericDocument.translatedPreview} label={activeSourceType.label + " 译文"} zoom={translationZoom} /> : activeGenericDocument?.translatedText !== undefined ? <PlainTextPreview text={activeGenericDocument.translatedText} label={activeSourceType.label + " 译文"} zoom={translationZoom} /> : <EmptyPreview text={sourceType === "pdf" ? "确认原文后点击开始翻译；图片、签名和印章将保留在译文预览中。" : phase === "review-translation" ? "译文已保存，但预览生成失败。" : "确认原文后点击开始翻译。"} />}
+          {phase === "review-translation" && model ? <div className="preview-content" style={{ width: `${translationZoom * 100}%` }}><TranslatedDocumentPreview sourceBytes={sourceBytes} pages={model.pages} maskedPages={ocrPages} onLineChange={commitLine} /></div> : activeGenericDocument?.translatedPreview ? <DocumentPdfPreview sourceBytes={activeGenericDocument.translatedPreview} label={activeSourceType.label + " 译文"} zoom={translationZoom} /> : activeGenericDocument?.translatedText !== undefined ? sourceType === "code" ? <CodePreview text={activeGenericDocument.translatedText} zoom={translationZoom} /> : <PlainTextPreview text={activeGenericDocument.translatedText} label={activeSourceType.label + " 译文"} zoom={translationZoom} /> : <EmptyPreview text={sourceType === "pdf" ? "确认原文后点击开始翻译；图片、签名和印章将保留在译文预览中。" : phase === "review-translation" ? "译文已保存，但预览生成失败。" : "确认原文后点击开始翻译。"} />}
         </div>
       </article>
       <aside className="glossary-card">
@@ -388,7 +406,7 @@ function App() {
           {previewTerms.slice(2).map((entry, index) => <li key={`${entry.source}-${index + 2}`}><span className="yaml-index">{glossaryEntries.length > 3 ? glossaryEntries.length : index + 3}.</span><code>{entry.source}: <b>{entry.target}</b></code></li>)}
         </ol>}
         <div className="tip"><strong>💡 提示</strong><span>术语表会在翻译时优先应用，提升全篇一致性。</span></div>
-        <div className="exports">{sourceType === "pdf" ? <><button className="button secondary" type="button" onClick={exportDocx} disabled={!model || isBusy(stage)}>导出 DOCX（版式）</button><button className="button secondary" type="button" onClick={exportPdf} disabled={!model || isBusy(stage)}>导出 PDF</button></> : <><button className="button secondary" type="button" onClick={exportGenericNative} disabled={!activeGenericDocument?.translatedPath || isBusy(stage)}>导出 {sourceType === "word" ? "DOCX" : sourceType === "presentation" ? "PPTX" : sourceType === "spreadsheet" ? "XLSX" : /\.md(?:own)?$/i.test(activeGenericDocument?.sourcePath ?? "") ? "MD" : "TXT"}</button><button className="button secondary" type="button" onClick={exportGenericPdf} disabled={!activeGenericDocument?.translatedPath || isBusy(stage)}>导出 PDF</button></>}</div>
+        <div className="exports">{sourceType === "pdf" ? <><button className="button secondary" type="button" onClick={exportDocx} disabled={!model || isBusy(stage)}>导出 DOCX（版式）</button><button className="button secondary" type="button" onClick={exportPdf} disabled={!model || isBusy(stage)}>导出 PDF</button></> : <><button className="button secondary" type="button" onClick={exportGenericNative} disabled={!activeGenericDocument?.translatedPath || isBusy(stage)}>导出 {sourceType === "code" ? activeGenericDocument?.sourcePath?.split(".").pop()?.toUpperCase() : sourceType === "word" ? "DOCX" : sourceType === "presentation" ? "PPTX" : sourceType === "spreadsheet" ? "XLSX" : /\.md(?:own)?$/i.test(activeGenericDocument?.sourcePath ?? "") ? "MD" : "TXT"}</button>{sourceType !== "code" && <button className="button secondary" type="button" onClick={exportGenericPdf} disabled={!activeGenericDocument?.translatedPath || isBusy(stage)}>导出 PDF</button>}</>}</div>
       </aside>
     </section>
   </main>;
@@ -426,6 +444,10 @@ function DocumentPdfPreview({ sourceBytes, label, zoom }: { sourceBytes: Uint8Ar
 
 function PlainTextPreview({ text, label, zoom }: { text: string; label: string; zoom: number }) {
   return <div className="plain-text-preview"><pre style={{ width: `${zoom * 100}%` }} aria-label={label}>{text}</pre></div>;
+}
+
+function CodePreview({ text, zoom }: { text: string; zoom: number }) {
+  return <div className="code-preview"><pre style={{ width: `${zoom * 100}%` }} aria-label="代码预览"><code>{tokenizeCode(text).map((token, index) => <span key={index} className={`code-${token.kind}`}>{token.text}</span>)}</code></pre></div>;
 }
 
 function UpdateCenter({ status, checking, installing, desktop, onCheck, onInstall, onClose }: { status?: UpdateStatus; checking: boolean; installing: boolean; desktop: boolean; onCheck: () => void; onInstall: () => void; onClose: () => void }) {

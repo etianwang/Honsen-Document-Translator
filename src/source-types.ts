@@ -1,4 +1,4 @@
-export type SourceType = "pdf" | "word" | "presentation" | "spreadsheet" | "text";
+export type SourceType = "pdf" | "word" | "presentation" | "spreadsheet" | "text" | "code";
 
 export interface SourceTypeDefinition {
   id: SourceType;
@@ -15,6 +15,7 @@ export const sourceTypes: SourceTypeDefinition[] = [
   { id: "presentation", label: "演示文稿", importLabel: "导入 PPT", extensions: ["ppt", "pptx"], outputExtension: "pptx" },
   { id: "spreadsheet", label: "Excel", importLabel: "导入 Excel", extensions: ["xls", "xlsx"], outputExtension: "xlsx" },
   { id: "text", label: "文本 / MD", importLabel: "导入文本", extensions: ["txt", "md", "markdown"], outputExtension: "txt" },
+  { id: "code", label: "代码 / HTML", importLabel: "导入代码", extensions: supportedCodeExtensions, outputExtension: "txt" },
 ];
 
 export function sourceTypeForFile(path: string): SourceTypeDefinition | undefined {
@@ -28,6 +29,8 @@ export function acceptsSourceFile(path: string, type: SourceType): boolean {
 
 export function exportFileName(path: string | undefined, targetLanguage: string, type: SourceTypeDefinition): string {
   const base = path?.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "translated";
-  const extension = type.id === "text" && /\.md(?:own)?$/i.test(path ?? "") ? "md" : type.outputExtension;
+  const extension = type.id === "code" ? path?.split(".").pop()?.toLowerCase() || type.outputExtension : type.id === "text" && /\.md(?:own)?$/i.test(path ?? "") ? "md" : type.outputExtension;
   return `${targetLanguage.toLowerCase()}_${base}.${extension}`;
 }
+import { supportedCodeExtensions } from "./code-translation";
+
