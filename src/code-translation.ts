@@ -42,7 +42,8 @@ export function extractCodeSegments(source: string, extension: string): CodeSegm
     if (quote === "'" || quote === '"') {
       const triple = extension === "py" && source.slice(index, index + 3) === quote.repeat(3);
       const start = index + (triple ? 3 : 1); const close = findQuotedEnd(source, start, quote, triple ? 3 : 1);
-      add(start, close); index = Math.min(source.length, close + (triple ? 3 : 1)); continue;
+      if (!isEventHandlerValue(source, index) && !isFontValue(source, index, extension)) add(start, close);
+      index = Math.min(source.length, close + (triple ? 3 : 1)); continue;
     }
     if (quote === "`") {
       const end = findQuotedEnd(source, index + 1, "`", 1);
@@ -108,6 +109,17 @@ function findQuotedEnd(source: string, start: number, quote: string, quoteLength
     if (source.slice(index, index + quoteLength) === quote.repeat(quoteLength)) return index;
   }
   return source.length;
+}
+
+function isEventHandlerValue(source: string, quoteIndex: number): boolean {
+  const tagStart = source.lastIndexOf("<", quoteIndex);
+  return tagStart >= 0 && /\bon[a-z][\w:-]*\s*=\s*$/i.test(source.slice(tagStart, quoteIndex));
+}
+
+function isFontValue(source: string, quoteIndex: number, extension: string): boolean {
+  if (!["css", "scss", "less", "html", "htm", "vue", "svelte", "jsx", "tsx"].includes(extension)) return false;
+  const declaration = source.slice(Math.max(source.lastIndexOf(";", quoteIndex), source.lastIndexOf("{", quoteIndex), source.lastIndexOf("}", quoteIndex)) + 1, quoteIndex);
+  return /^\s*(?:font|font-family|font-display|font-feature-settings|font-variation-settings)\s*:/i.test(declaration);
 }
 
 function addTemplateParts(source: string, start: number, end: number, add: (start: number, end: number, force?: boolean) => void): void {

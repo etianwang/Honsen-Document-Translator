@@ -31,6 +31,13 @@ describe("code translation extraction", () => {
     expect(extractCodeSegments(source, "php").map((segment) => segment.text)).toEqual(["Welcome"]);
   });
 
+  it("keeps fonts and event-handler calls out of translation", () => {
+    const css = "body { font-family: 'PingFang SC', 'Microsoft YaHei'; content: 'Welcome'; }";
+    expect(extractCodeSegments(css, "css").map((segment) => segment.text)).toEqual(["Welcome"]);
+    const html = '<button onclick="setRole(\'设计师\')">Welcome</button>';
+    expect(extractCodeSegments(html, "html").map((segment) => segment.text)).toEqual(["Welcome"]);
+  });
+
   it("reports malformed structural syntax while ignoring braces in strings", () => {
     expect(validateCodeText('const text = "{";', "ts").valid).toBe(true);
     expect(validateCodeText("function broken() {", "ts")).toMatchObject({ valid: false });
