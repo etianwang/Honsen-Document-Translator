@@ -14,7 +14,7 @@ export const sourceTypes: SourceTypeDefinition[] = [
   { id: "word", label: "Word", importLabel: "导入 Word", extensions: ["doc", "docx"], outputExtension: "docx" },
   { id: "presentation", label: "演示文稿", importLabel: "导入 PPT", extensions: ["ppt", "pptx"], outputExtension: "pptx" },
   { id: "spreadsheet", label: "Excel", importLabel: "导入 Excel", extensions: ["xls", "xlsx"], outputExtension: "xlsx" },
-  { id: "text", label: "文本 / Markdown", importLabel: "导入文本", extensions: ["txt", "md", "markdown"], outputExtension: "txt" },
+  { id: "text", label: "文本 / MD", importLabel: "导入文本", extensions: ["txt", "md", "markdown"], outputExtension: "txt" },
 ];
 
 export function sourceTypeForFile(path: string): SourceTypeDefinition | undefined {

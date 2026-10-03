@@ -1,7 +1,7 @@
-use std::{ffi::OsStr, fs, io::Write, os::windows::process::CommandExt, path::PathBuf, process::Command, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{ffi::OsStr, fs, io::{BufRead, BufReader, Write}, os::windows::process::CommandExt, path::PathBuf, process::{Command, Stdio}, time::{Duration, SystemTime, UNIX_EPOCH}};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 const DEEPL_FREE_ENDPOINT: &str = "https://api-free.deepl.com/v2/translate";
 const DEEPL_PRO_ENDPOINT: &str = "https://api.deepl.com/v2/translate";
@@ -116,7 +116,7 @@ struct WordTranslationRequest {
     format: String,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GlossaryEntryRequest {
     source: String,
@@ -139,6 +139,15 @@ struct DocumentTranslationRequest {
 #[serde(rename_all = "camelCase")]
 struct DocumentPreviewRequest {
     source_path: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(Clone)]
+struct DocumentTranslationProgress {
+    stage: String,
+    completed: usize,
+    total: usize,
 }
 
 #[derive(Serialize)]
@@ -348,6 +357,13 @@ fn libreoffice_path() -> PathBuf {
     bundled_resource("libreoffice/program/soffice.exe").unwrap_or_else(|| PathBuf::from("soffice"))
 }
 
+fn libreoffice_command() -> Command {
+    let path = libreoffice_path();
+    let mut command = background_command(&path);
+    if let Some(directory) = path.parent() { command.current_dir(directory); }
+    command
+}
+
 fn python_path() -> PathBuf {
     bundled_resource("python/python.exe").unwrap_or_else(|| PathBuf::from("python"))
 }
@@ -377,7 +393,7 @@ fn convert_legacy_office_document(source: &std::path::Path, output_directory: &s
     let profile_arg = format!("-env:UserInstallation=file:///{}", profile.to_string_lossy().replace('\\', "/"));
     let source_text = source.to_str().ok_or("DOCUMENT_INVALID_INPUT: invalid source path")?;
     let directory_text = output_directory.to_str().ok_or("DOCUMENT_INVALID_INPUT: invalid temporary directory")?;
-    let status = background_command(libreoffice_path()).args(["--headless", &profile_arg, "--convert-to", extension, "--outdir", directory_text, source_text]).status();
+    let status = libreoffice_command().args(["--headless", &profile_arg, "--convert-to", extension, "--outdir", directory_text, source_text]).status();
     let _ = fs::remove_dir_all(profile);
     let output = output_directory.join(source.file_stem().ok_or("DOCUMENT_INVALID_INPUT: source has no file name")?).with_extension(extension);
     if status.is_ok_and(|result| result.success()) && output.is_file() { Ok(output) } else { Err("DOCUMENT_CONVERSION_FAILED: LibreOffice could not convert the legacy Office document.".into()) }
@@ -458,7 +474,7 @@ fn export_docx_to_pdf(docx_bytes: Vec<u8>, output_path: String) -> Result<(), St
     let temporary_dir = temporary_docx.parent().ok_or("PDF_EXPORT_FAILED: temporary directory missing")?;
     let profile = libreoffice_profile_dir(nonce)?;
     let profile_arg = format!("-env:UserInstallation=file:///{}", profile.to_string_lossy().replace('\\', "/"));
-    let libreoffice_result = background_command(libreoffice_path())
+    let libreoffice_result = libreoffice_command()
         .args(["--headless", &profile_arg, "--convert-to", "pdf", "--outdir", temporary_dir.to_str().ok_or("PDF_EXPORT_FAILED: invalid temporary path")?, temporary_docx.to_str().ok_or("PDF_EXPORT_FAILED: invalid temporary path")?])
         .status();
     let converted = libreoffice_result.is_ok_and(|status| status.success() && temporary_pdf.exists());
@@ -513,9 +529,14 @@ fn translate_pdf_via_docx(request: WordTranslationRequest) -> Result<(), String>
 }
 
 #[tauri::command]
-fn translate_document_file(request: DocumentTranslationRequest) -> Result<(), String> {
+async fn translate_document_file(app: tauri::AppHandle, request: DocumentTranslationRequest) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || translate_document_file_sync(&app, request))
+        .await
+        .map_err(|error| format!("DOCUMENT_TRANSLATION_FAILED: Translation task stopped unexpectedly: {error}"))?
+}
+
+fn translate_document_file_sync(app: &tauri::AppHandle, request: DocumentTranslationRequest) -> Result<String, String> {
     let source = PathBuf::from(&request.source_path);
-    let output = PathBuf::from(&request.output_path);
     if !source.is_file() { return Err("DOCUMENT_INVALID_INPUT: Source document does not exist.".into()); }
     let (legacy_extension, output_extension, worker_type) = match request.source_type.as_str() {
         "word" => ("doc", "docx", "word"),
@@ -530,10 +551,16 @@ fn translate_document_file(request: DocumentTranslationRequest) -> Result<(), St
         [legacy_extension, output_extension].iter().any(|extension| has_extension(&source, extension))
     };
     if !valid_input { return Err("DOCUMENT_INVALID_INPUT: The selected file does not match its document type page.".into()); }
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_millis();
+    let output_extension = if worker_type == "markdown" { "md" } else { output_extension };
+    let output = if request.output_path.is_empty() {
+        let directory = std::env::temp_dir().join(format!("honsen-translated-{nonce}"));
+        fs::create_dir_all(&directory).map_err(|error| format!("DOCUMENT_TEMPORARY_DIRECTORY_FAILED: {error}"))?;
+        directory.join(source.file_stem().ok_or("DOCUMENT_INVALID_INPUT: source has no file name")?).with_extension(output_extension)
+    } else { PathBuf::from(&request.output_path) };
     if !has_extension(&output, output_extension) && !(worker_type == "markdown" && has_extension(&output, "md")) {
         return Err("DOCUMENT_INVALID_OUTPUT: The output file extension does not match the selected document type.".into());
     }
-    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_millis();
     let temporary_directory = std::env::temp_dir().join(format!("honsen-document-{nonce}"));
     fs::create_dir_all(&temporary_directory).map_err(|error| format!("DOCUMENT_TEMPORARY_DIRECTORY_FAILED: {error}"))?;
     let prepared_source = if !legacy_extension.is_empty() && has_extension(&source, legacy_extension) {
@@ -542,19 +569,34 @@ fn translate_document_file(request: DocumentTranslationRequest) -> Result<(), St
     let script = bundled_resource("scripts/translate_document.py").ok_or("DOCUMENT_TRANSLATOR_UNAVAILABLE: Translation worker was not found.")?;
     let glossary = serde_json::to_string(&request.glossary).map_err(|_| "DOCUMENT_INVALID_REQUEST: Invalid glossary.".to_owned())?;
     let key = deepl_key(request.api_key.as_deref())?;
-    let result = background_command(python_path()).env("DEEPL_API_KEY", key)
-        .args([script.to_string_lossy().as_ref(), prepared_source.to_string_lossy().as_ref(), request.output_path.as_str(), worker_type, request.target_language.as_str(), request.source_language.as_deref().unwrap_or(""), glossary.as_str()])
-        .output().map_err(|_| "DOCUMENT_TRANSLATOR_UNAVAILABLE: Python is unavailable.".to_owned());
+    let mut child = background_command(python_path()).env("DEEPL_API_KEY", key)
+        .args([script.to_string_lossy().as_ref(), prepared_source.to_string_lossy().as_ref(), output.to_string_lossy().as_ref(), worker_type, request.target_language.as_str(), request.source_language.as_deref().unwrap_or(""), glossary.as_str()])
+        .stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
+        .map_err(|_| "DOCUMENT_TRANSLATOR_UNAVAILABLE: Python is unavailable.".to_owned())?;
+    if let Some(stdout) = child.stdout.take() {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Ok(progress) = serde_json::from_str::<DocumentTranslationProgress>(&line) {
+                let _ = app.emit("document-translation-progress", progress);
+            }
+        }
+    }
+    let result = child.wait();
     let _ = fs::remove_dir_all(&temporary_directory);
-    let result = result?;
-    if !result.status.success() || !output.is_file() || fs::metadata(&output).map_or(true, |metadata| metadata.len() == 0) {
+    let result = result.map_err(|_| "DOCUMENT_TRANSLATION_FAILED: Translation worker stopped unexpectedly.".to_owned())?;
+    if !result.success() || !output.is_file() || fs::metadata(&output).map_or(true, |metadata| metadata.len() == 0) {
         return Err("DOCUMENT_TRANSLATION_FAILED: Document translation did not produce an output file.".into());
     }
-    Ok(())
+    Ok(output.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
-fn render_document_preview(request: DocumentPreviewRequest) -> Result<String, String> {
+async fn render_document_preview(request: DocumentPreviewRequest) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || render_document_preview_sync(request))
+        .await
+        .map_err(|error| format!("DOCUMENT_PREVIEW_FAILED: Preview task stopped unexpectedly: {error}"))?
+}
+
+fn render_document_preview_sync(request: DocumentPreviewRequest) -> Result<String, String> {
     let source = PathBuf::from(&request.source_path);
     if !source.is_file() { return Err("DOCUMENT_INVALID_INPUT: Source document does not exist.".into()); }
     if !["doc", "docx", "ppt", "pptx", "xls", "xlsx"].iter().any(|extension| has_extension(&source, extension)) {
@@ -563,15 +605,46 @@ fn render_document_preview(request: DocumentPreviewRequest) -> Result<String, St
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_millis();
     let directory = std::env::temp_dir().join(format!("honsen-preview-{nonce}"));
     fs::create_dir_all(&directory).map_err(|error| format!("DOCUMENT_PREVIEW_FAILED: {error}"))?;
-    let profile = libreoffice_profile_dir(nonce)?;
-    let profile_arg = format!("-env:UserInstallation=file:///{}", profile.to_string_lossy().replace('\\', "/"));
-    let directory_text = directory.to_str().ok_or("DOCUMENT_PREVIEW_FAILED: invalid temporary path")?;
-    let source_text = source.to_str().ok_or("DOCUMENT_PREVIEW_FAILED: invalid source path")?;
-    let status = background_command(libreoffice_path()).args(["--headless", &profile_arg, "--convert-to", "pdf", "--outdir", directory_text, source_text]).status();
-    let _ = fs::remove_dir_all(profile);
-    let preview = directory.join(source.file_stem().ok_or("DOCUMENT_PREVIEW_FAILED: source has no name")?).with_extension("pdf");
-    if status.is_ok_and(|result| result.success()) && preview.is_file() { Ok(preview.to_string_lossy().into_owned()) }
-    else { let _ = fs::remove_dir_all(directory); Err("DOCUMENT_PREVIEW_FAILED: Could not render document preview.".into()) }
+    let extension = source.extension().and_then(|value| value.to_str()).ok_or("DOCUMENT_PREVIEW_FAILED: source has no extension")?;
+    let staged_source = directory.join(format!("source.{extension}"));
+    let preview = directory.join("preview.pdf");
+    fs::copy(&source, &staged_source).map_err(|error| format!("DOCUMENT_PREVIEW_FAILED: {error}"))?;
+    match export_office_to_pdf(&staged_source, &preview) {
+        Ok(()) => Ok(preview.to_string_lossy().into_owned()),
+        Err(error) => { let _ = fs::remove_dir_all(directory); Err(error) }
+    }
+}
+
+#[tauri::command]
+async fn export_document_to_pdf(source_path: String, output_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let source = PathBuf::from(source_path);
+        let output = PathBuf::from(output_path);
+        if !source.is_file() { return Err("DOCUMENT_INVALID_INPUT: Source document does not exist.".into()); }
+        if !has_extension(&output, "pdf") { return Err("DOCUMENT_INVALID_OUTPUT: Output must be a PDF file.".into()); }
+        if !["doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt", "md", "markdown"].iter().any(|extension| has_extension(&source, extension)) {
+            return Err("DOCUMENT_UNSUPPORTED_TYPE: This document type cannot be exported as PDF.".into());
+        }
+        if let Some(parent) = output.parent() { fs::create_dir_all(parent).map_err(|error| format!("PDF_EXPORT_FAILED: {error}"))?; }
+        export_office_to_pdf(&source, &output).map_err(|error| format!("PDF_EXPORT_FAILED: {error}"))
+    }).await.map_err(|error| format!("PDF_EXPORT_FAILED: Export task stopped unexpectedly: {error}"))?
+}
+
+#[tauri::command]
+async fn export_document_file(source_path: String, output_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let source = PathBuf::from(source_path);
+        let output = PathBuf::from(output_path);
+        if !source.is_file() { return Err("DOCUMENT_INVALID_INPUT: Translated document is unavailable.".into()); }
+        if source == output { return Ok(()); }
+        if let Some(parent) = output.parent() { fs::create_dir_all(parent).map_err(|error| format!("DOCUMENT_EXPORT_FAILED: {error}"))?; }
+        let expected_size = fs::metadata(&source).map_err(|error| format!("DOCUMENT_EXPORT_FAILED: {error}"))?.len();
+        fs::copy(&source, &output).map_err(|error| format!("DOCUMENT_EXPORT_FAILED: {error}"))?;
+        if fs::metadata(&output).map_or(true, |metadata| metadata.len() != expected_size || metadata.len() == 0) {
+            return Err("DOCUMENT_EXPORT_FAILED: The exported file could not be verified.".into());
+        }
+        Ok(())
+    }).await.map_err(|error| format!("DOCUMENT_EXPORT_FAILED: Export task stopped unexpectedly: {error}"))?
 }
 
 #[tauri::command]
@@ -596,13 +669,35 @@ fn export_with_word(docx_path: &std::path::Path, pdf_path: &std::path::Path) -> 
     if status.success() && pdf_path.exists() { Ok(()) } else { Err("PDF_EXPORT_FAILED: LibreOffice and Word conversion both failed".into()) }
 }
 
+fn export_office_to_pdf(source: &std::path::Path, pdf_path: &std::path::Path) -> Result<(), String> {
+    let escape = |path: &std::path::Path| path.to_string_lossy().replace('\'', "''");
+    let source_extension = source.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+    let source = escape(source);
+    let output = escape(pdf_path);
+    let extension = pdf_path.extension().and_then(|value| value.to_str());
+    if extension != Some("pdf") { return Err("DOCUMENT_PREVIEW_FAILED: preview output must be PDF".into()); }
+    let command = match source_extension.as_str() {
+        "doc" | "docx" | "txt" | "md" | "markdown" => format!("$app=New-Object -ComObject Word.Application; $app.Visible=$false; $temporary=$null; $document=$null; try {{$document=$app.Documents.Open('{source}',$false,$true); $fit=$false; for($i=1;$i -le $document.Tables.Count;$i++){{$table=$document.Tables.Item($i); if(-not $table.AllowAutoFit -and $table.PreferredWidthType -eq 1 -and $table.PreferredWidth -ge 999999){{$fit=$true}}}} if($fit){{$temporary=Join-Path $env:TEMP ('honsen-pdf-'+[guid]::NewGuid().ToString()+'.{source_extension}'); $document.Close($false); Copy-Item -LiteralPath '{source}' -Destination $temporary; $document=$app.Documents.Open($temporary,$false,$false); for($i=1;$i -le $document.Tables.Count;$i++){{$table=$document.Tables.Item($i); if(-not $table.AllowAutoFit -and $table.PreferredWidthType -eq 1 -and $table.PreferredWidth -ge 999999){{$table.Rows.LeftIndent=20}}}} $document.Save()}} $document.ExportAsFixedFormat('{output}',17)}} finally {{if($document){{$document.Close($false)}} if($temporary){{Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue}} $app.Quit()}}"),
+        "ppt" | "pptx" => format!("$app=New-Object -ComObject PowerPoint.Application; try {{$presentation=$app.Presentations.Open('{source}',$true,$false,$false); $presentation.SaveAs('{output}',32); $presentation.Close()}} finally {{$app.Quit()}}"),
+        "xls" | "xlsx" => format!("$app=New-Object -ComObject Excel.Application; $app.Visible=$false; try {{$book=$app.Workbooks.Open('{source}',$false,$true); $book.ExportAsFixedFormat(0,'{output}'); $book.Close($false)}} finally {{$app.Quit()}}"),
+        _ => return Err("DOCUMENT_PREVIEW_UNSUPPORTED: This document type has no PDF preview.".into()),
+    };
+    let result = background_command("powershell.exe").args(["-NoProfile", "-Command", &command]).output()
+        .map_err(|error| format!("DOCUMENT_PREVIEW_OFFICE_FAILED: {error}"))?;
+    if result.status.success() && pdf_path.is_file() { Ok(()) }
+    else {
+        let detail = String::from_utf8_lossy(&result.stderr).trim().chars().take(300).collect::<String>();
+        Err(format!("DOCUMENT_PREVIEW_OFFICE_FAILED: {}", if detail.is_empty() { "The installed Office application could not create a PDF preview." } else { &detail }))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, convert_source_pdf_to_docx, translate_pdf_via_docx, translate_document_file, render_document_preview, release_document_preview, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update, record_diagnostic])
+        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, convert_source_pdf_to_docx, translate_pdf_via_docx, translate_document_file, render_document_preview, export_document_to_pdf, export_document_file, release_document_preview, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update, record_diagnostic])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

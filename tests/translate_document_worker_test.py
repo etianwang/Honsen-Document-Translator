@@ -20,7 +20,7 @@ class MarkdownProtectionTest(unittest.TestCase):
         self.assertIn(b'mergeCell ref="A1:A2"', result)
 
     def test_word_replaces_text_without_changing_paragraph_properties(self):
-        source = b'''<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Hello</w:t></w:r></w:p></w:body></w:document>'''
+        source = b'''<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" mc:Ignorable="w14"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Hello</w:t></w:r></w:p></w:body></w:document>'''
         globals_ = worker["translate_word"].__globals__
         original_deepl = globals_["deepl"]
         globals_["deepl"] = lambda values, *_: ["你好" for _ in values]
@@ -30,6 +30,8 @@ class MarkdownProtectionTest(unittest.TestCase):
         finally:
             globals_["deepl"] = original_deepl
         self.assertIn(b"pStyle", parts["word/document.xml"])
+        self.assertIn(b'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"', parts["word/document.xml"])
+        self.assertIn(b'mc:Ignorable="w14"', parts["word/document.xml"])
         self.assertIn("\u4f60\u597d".encode(), parts["word/document.xml"])
 
 

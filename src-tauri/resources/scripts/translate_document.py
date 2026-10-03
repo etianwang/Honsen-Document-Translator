@@ -1,4 +1,5 @@
 import json
+import io
 import os
 import re
 import sys
@@ -20,6 +21,7 @@ def keep(value):
 def deepl(values, target, source, glossary):
     items = [(index, value) for index, value in enumerate(values) if not keep(value)]
     translated = list(values)
+    print(json.dumps({"stage": "translating", "completed": 0, "total": len(items)}), flush=True)
     if not items:
         return translated
     endpoint = "https://api-free.deepl.com/v2/translate" if os.environ["DEEPL_API_KEY"].endswith(":fx") else "https://api.deepl.com/v2/translate"
@@ -35,12 +37,12 @@ def deepl(values, target, source, glossary):
             raise RuntimeError("DEEPL_INVALID_RESPONSE")
         for (index, value), result in zip(batch, response):
             translated[index] = terms.get(value.strip(), result["text"])
+        print(json.dumps({"stage": "translating", "completed": min(start + len(batch), len(items)), "total": len(items)}), flush=True)
     return translated
 
 
-def replace_nodes(groups, target, source, glossary):
-    values = ["".join(node.text or "" for node in nodes) for nodes in groups]
-    for nodes, translation in zip(groups, deepl(values, target, source, glossary)):
+def replace_nodes(groups, translations):
+    for nodes, translation in zip(groups, translations):
         if not nodes or translation == "".join(node.text or "" for node in nodes):
             continue
         nodes[0].text = translation
@@ -48,45 +50,77 @@ def replace_nodes(groups, target, source, glossary):
             node.text = ""
 
 
-def xml_bytes(root):
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+def xml_bytes(root, namespaces):
+    encoded = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    missing = []
+    for prefix, uri in namespaces:
+        declaration = b"xmlns" if not prefix else b"xmlns:" + prefix.encode()
+        if declaration + b"=" not in encoded:
+            missing.append(b" " + declaration + b'=\"' + uri.encode() + b'\"')
+    if not missing:
+        return encoded
+    start = encoded.find(b"\n<") + 1
+    end = encoded.find(b">", start)
+    return encoded[:end] + b"".join(missing) + encoded[end:]
+
+
+def parse_xml(data):
+    # OOXML uses prefix names (for example w14) inside mc:Ignorable. ElementTree
+    # otherwise rewrites them to ns0/ns1 and leaves those references invalid.
+    namespaces = []
+    seen = set()
+    for _, (prefix, uri) in ET.iterparse(io.BytesIO(data), events=("start-ns",)):
+        if prefix not in ("xml", "xmlns"):
+            ET.register_namespace(prefix, uri)
+            if prefix not in seen:
+                namespaces.append((prefix, uri))
+                seen.add(prefix)
+    return ET.fromstring(data), namespaces
 
 
 def translate_word(parts, target, source, glossary):
+    documents, groups = [], []
     for name, data in list(parts.items()):
-        root = ET.fromstring(data)
-        groups = [[node for node in paragraph.iter(W + "t")] for paragraph in root.iter(W + "p")]
-        replace_nodes(groups, target, source, glossary)
-        parts[name] = xml_bytes(root)
+        root, namespaces = parse_xml(data)
+        current_groups = [[node for node in paragraph.iter(W + "t")] for paragraph in root.iter(W + "p")]
+        documents.append((name, root, namespaces)); groups.extend(current_groups)
+    replace_nodes(groups, deepl(["".join(node.text or "" for node in nodes) for nodes in groups], target, source, glossary))
+    for name, root, namespaces in documents:
+        parts[name] = xml_bytes(root, namespaces)
 
 
 def translate_presentation(parts, target, source, glossary):
+    documents, groups = [], []
     for name, data in list(parts.items()):
-        root = ET.fromstring(data)
-        groups = [[node for node in paragraph.iter(A + "t")] for paragraph in root.iter(A + "p")]
-        replace_nodes(groups, target, source, glossary)
-        parts[name] = xml_bytes(root)
+        root, namespaces = parse_xml(data)
+        current_groups = [[node for node in paragraph.iter(A + "t")] for paragraph in root.iter(A + "p")]
+        documents.append((name, root, namespaces)); groups.extend(current_groups)
+    replace_nodes(groups, deepl(["".join(node.text or "" for node in nodes) for nodes in groups], target, source, glossary))
+    for name, root, namespaces in documents:
+        parts[name] = xml_bytes(root, namespaces)
 
 
 def translate_spreadsheet(parts, target, source, glossary):
+    documents, groups = [], []
     shared = "xl/sharedStrings.xml"
     if shared in parts:
-        root = ET.fromstring(parts[shared])
-        groups = [[node for node in item.iter(S + "t")] for item in root.iter(S + "si")]
-        replace_nodes(groups, target, source, glossary)
-        parts[shared] = xml_bytes(root)
+        root, namespaces = parse_xml(parts[shared])
+        current_groups = [[node for node in item.iter(S + "t")] for item in root.iter(S + "si")]
+        documents.append((shared, root, namespaces)); groups.extend(current_groups)
     for name, data in list(parts.items()):
         if not re.fullmatch(r"xl/worksheets/sheet\d+\.xml", name):
             continue
-        root = ET.fromstring(data)
-        groups = []
+        root, namespaces = parse_xml(data)
+        current_groups = []
         for cell in root.iter(S + "c"):
             if cell.find(S + "f") is None:
                 inline = cell.find(S + "is")
                 if inline is not None:
-                    groups.append([node for node in inline.iter(S + "t")])
-        replace_nodes(groups, target, source, glossary)
-        parts[name] = xml_bytes(root)
+                    current_groups.append([node for node in inline.iter(S + "t")])
+        documents.append((name, root, namespaces)); groups.extend(current_groups)
+    replace_nodes(groups, deepl(["".join(node.text or "" for node in nodes) for nodes in groups], target, source, glossary))
+    for name, root, namespaces in documents:
+        parts[name] = xml_bytes(root, namespaces)
 
 
 def split_markdown(text):

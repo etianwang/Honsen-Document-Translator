@@ -22,18 +22,20 @@ const messages: Record<string, string> = {
   DOCUMENT_CONVERSION_FAILED: "旧版 Office 文件转换失败，请确认文件可正常打开后重试。",
   DOCUMENT_TRANSLATOR_UNAVAILABLE: "文档翻译组件不可用。请重新安装应用，或确认本机已安装 Python。",
   DOCUMENT_TRANSLATION_FAILED: "文档翻译未生成输出文件，请检查文件是否受保护或已被其他程序占用。",
+  DOCUMENT_PREVIEW_OFFICE_FAILED: "Microsoft Office 未能生成预览。请确认文件可在 Word、PowerPoint 或 Excel 中正常打开。",
+  DOCUMENT_PREVIEW_FAILED: "文档预览生成失败。请确认文件没有被占用，并检查本机 Office 或 LibreOffice。",
   UPDATE_CHECK_FAILED: "检查更新失败，请稍后重试。",
   UPDATE_DOWNLOAD_FAILED: "更新下载安装包失败，请稍后重试。",
   UPDATE_CHECKSUM_FAILED: "更新文件校验失败，已取消安装。",
 };
 
 export function userMessage(error: unknown, fallback: string): string {
-  const message = error instanceof Error ? error.message : "";
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const code = message.split(":", 1)[0];
   return messages[code] ?? (message && !message.includes(":") && /[\u4e00-\u9fff]/.test(message) ? message : fallback);
 }
 
 export function diagnosticCode(error: unknown): string {
-  const code = error instanceof Error ? error.message.split(":", 1)[0] : "";
+  const code = (error instanceof Error ? error.message : typeof error === "string" ? error : "").split(":", 1)[0];
   return /^[A-Z_]{1,64}$/.test(code) ? code : "UNKNOWN_ERROR";
 }

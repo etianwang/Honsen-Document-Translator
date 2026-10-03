@@ -11,6 +11,10 @@
     "opener:default",
     "dialog:default",
     "fs:allow-read-file",
+    {
+      "identifier": "fs:scope",
+      "allow": ["$TEMP/honsen-preview-*/**"]
+    },
     "fs:allow-write-file"
   ]
 }
