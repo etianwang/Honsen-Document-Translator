@@ -76,7 +76,7 @@ end;
 
 function SameInstallLocation(const Left, Right: String): Boolean;
 begin
-  Result := CompareText(AddBackslash(GetLongName(ExpandFileName(Left))), AddBackslash(GetLongName(ExpandFileName(Right)))) = 0;
+  Result := CompareText(AddBackslash(Left), AddBackslash(Right)) = 0;
 end;
 
 function HasConflictingHonsenInstallation(const TargetLocation: String; var ExistingLocation: String): Boolean;

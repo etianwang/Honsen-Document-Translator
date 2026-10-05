@@ -175,7 +175,7 @@ fn update(arguments: &Arguments, from_version: &str) -> Result<RegistryRecord, S
     wait_for_exit(arguments.wait_pid, &before.executable_path)?;
     let log = installer_log_path(&arguments.app_id)?;
     if let Some(parent) = log.parent() { fs::create_dir_all(parent).map_err(|error| format!("UPDATE_LOG_FAILED: {error}"))?; }
-    let exit = Command::new(&arguments.installer).args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", &format!("/DIR={}", target.display()), &format!("/LOG={}", log.display())])
+    let exit = Command::new(&arguments.installer).args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", &format!("/DIR={}", before.install_location.display()), &format!("/LOG={}", log.display())])
         .status().map_err(|error| format!("UPDATE_INSTALLER_START_FAILED: {error}"))?;
     if !exit.success() { return Err(format!("INSTALLER_EXIT_{}: Inno Setup exited with {:?}.", exit.code().unwrap_or(-1), exit.code())); }
     if fs::read_to_string(&log).map_or(true, |content| content.trim().is_empty()) { return Err("UPDATE_LOG_FAILED: Inno Setup did not create a readable installation log.".into()); }
