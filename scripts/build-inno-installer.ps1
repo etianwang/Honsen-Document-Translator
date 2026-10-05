@@ -3,5 +3,6 @@ $installedCompiler = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentV
 $compiler = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "${env:ProgramFiles}\Inno Setup 6\ISCC.exe") + $installedCompiler | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $compiler) { throw 'Inno Setup 6 is required. Install it, then rerun this script.' }
 if (-not (Test-Path -LiteralPath 'src-tauri/target/release/tauri-app.exe')) { throw 'Release EXE not found. Run pnpm tauri build first.' }
+if (-not (Test-Path -LiteralPath 'src-tauri/target/release/HonsenUpdateRunner.exe')) { throw 'Update runner EXE not found. Run pnpm tauri build first.' }
 & $compiler 'installer/Honsen-PDF-Translator.iss'
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE." }

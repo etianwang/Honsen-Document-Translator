@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "1.3.1"
+version = "1.4.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -25,10 +25,12 @@ tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dotenvy = "0.15"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 tokio = { version = "1", features = ["macros", "rt", "time"] }
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
 sha2 = "0.10"
+winreg = "0.55"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

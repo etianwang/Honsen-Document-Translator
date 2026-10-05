@@ -1,5 +1,5 @@
 param(
-  [string]$Installer = 'src-tauri/target/release/installer/Honsen-PDF-Translator-Setup.exe',
+  [string]$Installer = 'src-tauri/target/release/installer/Honsen-Document-Translator-Setup.exe',
   [string]$Fixture = 'tests/fixtures/01-simple-paragraph.pdf'
 )
 
@@ -51,6 +51,15 @@ try {
     if (-not (Test-Path -LiteralPath $path)) { throw "Missing bundled runtime: $path" }
   }
   $app = Join-Path $installRoot 'HonsenPdfTranslator.exe'
+  $runner = Join-Path $installRoot 'HonsenUpdateRunner.exe'
+  $manifest = Get-Content -Raw (Join-Path $installRoot 'honsen.app.json') | ConvertFrom-Json
+  $registry = Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\Software\Honsen Program\Apps\honsen.document-translator'
+  if ($manifest.appId -ne 'honsen.document-translator' -or $manifest.executable -ne 'HonsenPdfTranslator.exe' -or $manifest.updateRunner -ne 'HonsenUpdateRunner.exe' -or -not (Test-Path -LiteralPath $runner)) {
+    throw 'Honsen update protocol files are missing or inconsistent.'
+  }
+  if ($registry.AppId -ne 'honsen.document-translator' -or $registry.InstallLocation -ne $installRoot -or $registry.ExecutablePath -ne $app -or $registry.UpdateRunnerPath -ne $runner -or $registry.LauncherPath -ne $runner -or $registry.UpdateManifestUrl -ne $manifest.updateManifestUrl -or $registry.InstallScope -ne 'machine') {
+    throw 'Honsen Program registry record is missing or inconsistent.'
+  }
   $deadline = (Get-Date).AddSeconds(15)
   do {
     $started = Get-CimInstance Win32_Process -Filter "Name='HonsenPdfTranslator.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and $_.ExecutablePath -ieq $app } | Select-Object -First 1
@@ -77,7 +86,7 @@ try {
   Stop-TestLibreOffice $installRoot
   if (-not (Test-Path -LiteralPath $pdf) -or (Get-Item -LiteralPath $pdf).Length -eq 0) { throw 'Bundled LibreOffice could not export the DOCX fixture.' }
 
-  Write-Host 'Installed-runtime verification passed: Inno install, bundled Poppler/Tesseract OCR, bundled Python, bundled LibreOffice PDF export, and uninstall.'
+  Write-Host 'Installed-runtime verification passed: Inno install, Honsen update protocol, bundled Poppler/Tesseract OCR, bundled Python, bundled LibreOffice PDF export, and uninstall.'
 }
 finally {
   Stop-TestLibreOffice $installRoot
