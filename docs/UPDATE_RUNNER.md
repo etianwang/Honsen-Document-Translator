@@ -12,7 +12,7 @@
 | 安装描述文件 | `<InstallLocation>\honsen.app.json` |
 | 更新源 | GitHub `releases/latest` API |
 
-Runner 是唯一允许安装、替换、验证和重启应用的组件。Runner、主程序或工具箱均可下载，但下载方必须校验 SHA-256；任何下载方都只能把已校验安装包交给 Runner。主程序和工具箱不得直接启动 Inno 或覆盖应用文件。
+Runner 是唯一允许安装、替换、验证和重启应用的组件。Runner 和工具箱可以下载，但下载方必须校验 SHA-256；任何下载方都只能把已校验安装包交给 Runner。主程序不下载、不安装、不替换文件，只做 Runner 健康检查和唤起。工具箱不得直接启动 Inno 或覆盖应用文件。
 
 ## 注册表与识别文件
 
@@ -130,7 +130,23 @@ Inno 固定参数：
 --result-path "%LOCALAPPDATA%\Honsen Program\UpdateResults\honsen.document-translator\<GUID>.json"
 ```
 
-工具箱只读取自己传入的结果文件。结果包含 `operationId`、appId、来源、旧/新版本、安装目录、主程序路径和完成时间；失败结果包含失败步骤、安装器退出码、日志路径和错误信息。
+工具箱只读取自己传入的结果文件。固定结果字段为：
+
+```text
+operationId
+appId
+status
+source
+fromVersion
+toVersion
+step
+installerExitCode
+installerLogPath
+message
+completedAtUtc
+```
+
+结果另附安装目录和主程序路径，便于展示与诊断。
 
 ## 主程序职责
 
