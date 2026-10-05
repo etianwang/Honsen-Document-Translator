@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{env, ffi::OsStr, fs, io::Write, os::windows::ffi::OsStrExt, path::{Path, PathBuf}, process::{Command, ExitCode}, ptr, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{env, ffi::OsStr, fs, io::Write, os::windows::ffi::OsStrExt, path::{Path, PathBuf}, process::{Child, Command, ExitCode}, ptr, time::{Duration, SystemTime, UNIX_EPOCH}};
 use windows_sys::Win32::{Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_INVALID_PARAMETER, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT}, System::Threading::{CreateMutexW, OpenProcess, QueryFullProcessImageNameW, ReleaseMutex, TerminateProcess, WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE}};
 use winreg::{enums::*, RegKey};
 
@@ -64,6 +64,7 @@ struct UpdateResult {
 }
 
 struct UpdateLock(HANDLE);
+struct StartupNotice(Option<Child>);
 
 #[derive(Deserialize)] struct GithubRelease { tag_name: String, draft: bool, prerelease: bool, body: Option<String>, assets: Vec<GithubAsset> }
 #[derive(Deserialize)] struct GithubAsset { name: String, browser_download_url: String }
@@ -72,6 +73,10 @@ struct UpdateLock(HANDLE);
 
 impl Drop for UpdateLock {
     fn drop(&mut self) { unsafe { ReleaseMutex(self.0); CloseHandle(self.0); } }
+}
+
+impl Drop for StartupNotice {
+    fn drop(&mut self) { if let Some(child) = self.0.as_mut() { let _ = child.kill(); } }
 }
 
 fn main() -> ExitCode {
@@ -103,6 +108,8 @@ fn parse_launch(raw: &[String]) -> Result<LaunchArguments, String> {
 }
 
 fn run_launch(arguments: LaunchArguments) -> Result<(), String> {
+    let _lock = acquire_lock(APP_ID)?;
+    let _notice = StartupNotice(Command::new("powershell.exe").args(["-NoProfile", "-WindowStyle", "Hidden", "-STA", "-Command", "Add-Type -AssemblyName PresentationFramework; $w=New-Object System.Windows.Window; $w.Title='Honsen 文档翻译器'; $w.SizeToContent='WidthAndHeight'; $w.WindowStartupLocation='CenterScreen'; $w.ResizeMode='NoResize'; $w.Topmost=$true; $t=New-Object System.Windows.Controls.TextBlock; $t.Text='正在检查更新，请稍候…'; $t.Margin='28'; $t.FontSize=16; $w.Content=$t; $w.ShowDialog() | Out-Null"]).spawn().ok());
     let before = registry_record().ok();
     let outcome = run_launch_inner(arguments.wait_pid, &arguments.operation_id, &arguments.result_path);
     let result = match &outcome {

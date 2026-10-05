@@ -188,7 +188,7 @@ struct AvailableUpdate { version: String, release_notes: String, installer_url: 
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct HonsenAppManifest { app_id: String, executable: String, update_runner: String, update_manifest_url: String }
+struct HonsenAppManifest { app_id: String, version: String, executable: String, update_runner: String, update_manifest_url: String }
 
 fn background_command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
@@ -256,7 +256,7 @@ async fn legacy_install_update(app: tauri::AppHandle) -> Result<(), String> {
     if !actual.eq_ignore_ascii_case(&update.sha256) { return Err("UPDATE_CHECKSUM_FAILED: Downloaded installer did not match the published SHA-256 checksum.".into()); }
     let installer = std::env::temp_dir().join(format!("honsen-pdf-translator-{}-setup.exe", update.version));
     fs::write(&installer, bytes).map_err(|error| format!("UPDATE_DOWNLOAD_FAILED: {error}"))?;
-    let (target_dir, runner) = installed_update_paths()?;
+    let (target_dir, runner, _) = installed_update_paths()?;
     let pid = std::process::id().to_string();
     let installer = installer.to_string_lossy().into_owned();
     let target_dir = target_dir.to_string_lossy().into_owned();
@@ -271,19 +271,19 @@ async fn legacy_install_update(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn check_for_update() -> Result<UpdateStatus, String> {
-    let _ = installed_update_paths()?;
-    Ok(UpdateStatus { available: false, current_version: env!("CARGO_PKG_VERSION").into(), version: None, release_notes: Some("更新服务正常。启动应用时将由 HonsenUpdateRunner 检查更新。".into()) })
+    let (_, _, version) = installed_update_paths()?;
+    Ok(UpdateStatus { available: false, current_version: version, version: None, release_notes: Some("更新服务正常。启动应用时将由 HonsenUpdateRunner 检查更新。".into()) })
 }
 
 #[tauri::command]
 fn install_update(app: tauri::AppHandle) -> Result<(), String> {
-    let (_, runner) = installed_update_paths()?;
+    let (_, runner, _) = installed_update_paths()?;
     background_command(runner).args(["launch", "--app-id", HONSEN_APP_ID, "--wait-pid", &std::process::id().to_string()]).spawn().map_err(|error| format!("UPDATE_RUNNER_START_FAILED: {error}"))?;
     app.exit(0);
     Ok(())
 }
 
-fn installed_update_paths() -> Result<(PathBuf, PathBuf), String> {
+fn installed_update_paths() -> Result<(PathBuf, PathBuf, String), String> {
     let executable = std::env::current_exe().map_err(|error| format!("UPDATE_MANIFEST_FAILED: {error}"))?;
     let directory = executable.parent().ok_or("UPDATE_MANIFEST_FAILED: Application directory is unavailable.")?.to_path_buf();
     let manifest = fs::read_to_string(directory.join("honsen.app.json")).map_err(|_| "UPDATE_MANIFEST_FAILED: honsen.app.json is missing or not UTF-8.")?;
@@ -294,7 +294,7 @@ fn installed_update_paths() -> Result<(PathBuf, PathBuf), String> {
     let runner = directory.join(&manifest.update_runner);
     if !runner.is_file() { return Err("UPDATE_RUNNER_UNAVAILABLE: HonsenUpdateRunner.exe is missing from the application directory.".into()); }
     verify_honsen_registry(&directory, &executable, &runner, &manifest.update_manifest_url)?;
-    Ok((directory, runner))
+    Ok((directory, runner, manifest.version))
 }
 
 fn verify_honsen_registry(directory: &std::path::Path, executable: &std::path::Path, runner: &std::path::Path, update_manifest_url: &str) -> Result<(), String> {
