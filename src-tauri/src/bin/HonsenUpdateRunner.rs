@@ -39,12 +39,17 @@ struct Arguments {
     target_dir: PathBuf,
     expected_version: String,
     restart: bool,
+    operation_id: String,
+    result_path: PathBuf,
 }
+
+struct LaunchArguments { source: String, wait_pid: u32, operation_id: String, result_path: PathBuf }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateResult {
     app_id: String,
+    operation_id: String,
     status: String,
     source: String,
     from_version: Option<String>,
@@ -60,7 +65,7 @@ struct UpdateResult {
 
 struct UpdateLock(HANDLE);
 
-#[derive(Deserialize)] struct GithubRelease { tag_name: String, draft: bool, prerelease: bool, assets: Vec<GithubAsset> }
+#[derive(Deserialize)] struct GithubRelease { tag_name: String, draft: bool, prerelease: bool, body: Option<String>, assets: Vec<GithubAsset> }
 #[derive(Deserialize)] struct GithubAsset { name: String, browser_download_url: String }
 #[derive(Deserialize)] struct Checksums { assets: Vec<Checksum> }
 #[derive(Deserialize)] struct Checksum { name: String, sha256: String }
@@ -78,8 +83,8 @@ fn main() -> ExitCode {
         };
     }
     let result = match raw.get(1).map(String::as_str) {
-        Some("launch") => parse_launch(&raw).and_then(|pid| run_launch("app", pid)),
-        Some("repair") => parse_launch(&raw).and_then(|pid| run_launch("repair", pid)),
+        Some("launch") => parse_launch(&raw).and_then(run_launch),
+        Some("repair") => parse_launch(&raw).and_then(run_launch),
         _ => parse_arguments(&raw).and_then(run_update),
     };
     match result {
@@ -88,28 +93,36 @@ fn main() -> ExitCode {
     }
 }
 
-fn parse_launch(raw: &[String]) -> Result<u32, String> {
+fn parse_launch(raw: &[String]) -> Result<LaunchArguments, String> {
     let value = |name: &str| raw.windows(2).find_map(|pair| (pair[0] == name).then(|| pair[1].as_str()));
     if let Some(app_id) = value("--app-id") { if app_id != APP_ID { return Err("UPDATE_IDENTITY_FAILED: Unexpected appId.".into()); } }
-    value("--wait-pid").map(|value| value.parse().map_err(|_| "RUNNER_ARGUMENTS_INVALID: --wait-pid must be an integer.".into())).transpose().map(|value| value.unwrap_or(0))
+    let wait_pid = value("--wait-pid").map(|value| value.parse().map_err(|_| "RUNNER_ARGUMENTS_INVALID: --wait-pid must be an integer.".to_owned())).transpose()?.unwrap_or(0);
+    let operation_id = value("--operation-id").unwrap_or("launch").to_owned();
+    let result_path = value("--result-path").map(PathBuf::from).unwrap_or(default_result_path(APP_ID, &operation_id)?);
+    Ok(LaunchArguments { source: value("--source").unwrap_or("app").to_owned(), wait_pid, operation_id, result_path })
 }
 
-fn run_launch(source: &str, wait_pid: u32) -> Result<(), String> {
+fn run_launch(arguments: LaunchArguments) -> Result<(), String> {
     let before = registry_record().ok();
-    let outcome = run_launch_inner(wait_pid);
+    let outcome = run_launch_inner(arguments.wait_pid, &arguments.operation_id, &arguments.result_path);
     let result = match &outcome {
-        Ok(record) => UpdateResult { app_id: APP_ID.into(), status: "success".into(), source: source.into(), from_version: before.as_ref().map(|value| value.version.clone()), to_version: record.version.clone(), install_location: Some(record.install_location.to_string_lossy().into_owned()), executable_path: Some(record.executable_path.to_string_lossy().into_owned()), step: None, installer_exit_code: Some(0), installer_log_path: Some(installer_log_path(APP_ID)?.to_string_lossy().into_owned()), message: None, completed_at_utc: completed_at() },
-        Err(error) => UpdateResult { app_id: APP_ID.into(), status: "failed".into(), source: source.into(), from_version: before.as_ref().map(|value| value.version.clone()), to_version: before.as_ref().map(|value| value.version.clone()).unwrap_or_default(), install_location: before.as_ref().map(|value| value.install_location.to_string_lossy().into_owned()), executable_path: before.as_ref().map(|value| value.executable_path.to_string_lossy().into_owned()), step: Some(error.split(':').next().unwrap_or("UPDATE_FAILED").into()), installer_exit_code: installer_exit_code(error), installer_log_path: installer_log_path(APP_ID).ok().map(|value| value.to_string_lossy().into_owned()), message: Some(error.clone()), completed_at_utc: completed_at() },
+        Ok(record) => UpdateResult { app_id: APP_ID.into(), operation_id: arguments.operation_id.clone(), status: "success".into(), source: arguments.source.clone(), from_version: before.as_ref().map(|value| value.version.clone()), to_version: record.version.clone(), install_location: Some(record.install_location.to_string_lossy().into_owned()), executable_path: Some(record.executable_path.to_string_lossy().into_owned()), step: None, installer_exit_code: Some(0), installer_log_path: Some(installer_log_path(APP_ID)?.to_string_lossy().into_owned()), message: None, completed_at_utc: completed_at() },
+        Err(error) => UpdateResult { app_id: APP_ID.into(), operation_id: arguments.operation_id.clone(), status: "failed".into(), source: arguments.source.clone(), from_version: before.as_ref().map(|value| value.version.clone()), to_version: before.as_ref().map(|value| value.version.clone()).unwrap_or_default(), install_location: before.as_ref().map(|value| value.install_location.to_string_lossy().into_owned()), executable_path: before.as_ref().map(|value| value.executable_path.to_string_lossy().into_owned()), step: Some(error.split(':').next().unwrap_or("UPDATE_FAILED").into()), installer_exit_code: installer_exit_code(error), installer_log_path: installer_log_path(APP_ID).ok().map(|value| value.to_string_lossy().into_owned()), message: Some(error.clone()), completed_at_utc: completed_at() },
     };
-    write_result(&result_path(APP_ID)?, &result)?;
+    write_result(&arguments.result_path, &result)?;
     outcome.map(|_| ())
 }
 
-fn run_launch_inner(wait_pid: u32) -> Result<RegistryRecord, String> {
+fn run_launch_inner(wait_pid: u32, operation_id: &str, result_path: &Path) -> Result<RegistryRecord, String> {
     let record = validate_install(&registry_record()?.install_location.canonicalize().map_err(|_| "UPDATE_TARGET_FAILED: InstallLocation is missing.")?)?;
     let client = reqwest::blocking::Client::builder().user_agent("Honsen-Document-Translator-Updater").timeout(Duration::from_secs(60)).build().map_err(|error| format!("UPDATE_CHECK_FAILED: {error}"))?;
     let release = client.get(&record.update_manifest_url).send().map_err(|_| "UPDATE_CHECK_FAILED: Could not contact the update manifest.")?.error_for_status().map_err(|_| "UPDATE_CHECK_FAILED: The update manifest returned an error.")?.json::<GithubRelease>().map_err(|_| "UPDATE_CHECK_FAILED: Release metadata is invalid.")?;
-    if release.draft || release.prerelease || !is_newer(&release.tag_name, &record.version) { Command::new(&record.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?; return Ok(record); }
+    if release.draft || release.prerelease || !is_newer(&release.tag_name, &record.version) || skipped_version().as_deref() == Some(release.tag_name.trim_start_matches('v')) { Command::new(&record.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?; return Ok(record); }
+    match update_choice(&release.tag_name, release.body.as_deref().unwrap_or("此版本未提供更新说明。"))?.as_str() {
+        "Yes" => {},
+        "Cancel" => { save_skipped_version(release.tag_name.trim_start_matches('v'))?; Command::new(&record.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?; return Ok(record); },
+        _ => { Command::new(&record.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?; return Ok(record); },
+    }
     let installer = release.assets.iter().find(|asset| asset.name == "Honsen-Document-Translator-Setup.exe").ok_or("UPDATE_CHECK_FAILED: Release installer is missing.")?;
     let sums = release.assets.iter().find(|asset| asset.name == "SHA256SUMS.json").ok_or("UPDATE_CHECK_FAILED: Release checksums are missing.")?;
     let sums = client.get(&sums.browser_download_url).send().map_err(|_| "UPDATE_CHECK_FAILED: Could not download checksums.")?.json::<Checksums>().map_err(|_| "UPDATE_CHECK_FAILED: Checksums are invalid.")?;
@@ -117,7 +130,7 @@ fn run_launch_inner(wait_pid: u32) -> Result<RegistryRecord, String> {
     let bytes = client.get(&installer.browser_download_url).send().map_err(|_| "UPDATE_DOWNLOAD_FAILED: Could not download installer.")?.bytes().map_err(|_| "UPDATE_DOWNLOAD_FAILED: Could not read installer.")?;
     let path = env::temp_dir().join(format!("honsen-document-translator-{}.exe", release.tag_name));
     fs::write(&path, bytes).map_err(|error| format!("UPDATE_DOWNLOAD_FAILED: {error}"))?;
-    run_update(Arguments { source: "app".into(), app_id: APP_ID.into(), wait_pid, installer: path, sha256, target_dir: record.install_location, expected_version: release.tag_name.trim_start_matches('v').into(), restart: true })?;
+    run_update(Arguments { source: "app".into(), app_id: APP_ID.into(), wait_pid, installer: path, sha256, target_dir: record.install_location, expected_version: release.tag_name.trim_start_matches('v').into(), restart: true, result_path: result_path.to_path_buf(), operation_id: operation_id.into() })?;
     registry_record()
 }
 
@@ -150,19 +163,20 @@ fn parse_arguments(raw: &[String]) -> Result<Arguments, String> {
     let expected_version = value("--expected-version")?;
     if !valid_version(&expected_version) { return Err("RUNNER_ARGUMENTS_INVALID: --expected-version must be a numeric release version.".into()); }
     let restart = match value("--restart")?.as_str() { "true" => true, "false" => false, _ => return Err("RUNNER_ARGUMENTS_INVALID: --restart must be true or false.".into()) };
-    Ok(Arguments { source, app_id, wait_pid, installer: PathBuf::from(value("--installer")?), sha256, target_dir: PathBuf::from(value("--target-dir")?), expected_version, restart })
+    let operation_id = raw.windows(2).find_map(|pair| (pair[0] == "--operation-id").then(|| pair[1].clone())).unwrap_or_else(|| "apply".into());
+    let result_path = raw.windows(2).find_map(|pair| (pair[0] == "--result-path").then(|| PathBuf::from(&pair[1]))).unwrap_or(default_result_path(APP_ID, &operation_id)?);
+    Ok(Arguments { source, app_id, wait_pid, installer: PathBuf::from(value("--installer")?), sha256, target_dir: PathBuf::from(value("--target-dir")?), expected_version, restart, operation_id, result_path })
 }
 
 fn run_update(arguments: Arguments) -> Result<(), String> {
     if arguments.app_id != APP_ID { return Err("UPDATE_IDENTITY_FAILED: Unexpected appId.".into()); }
-    let result_path = result_path(&arguments.app_id)?;
     let from_version = registry_record().ok().map(|record| record.version);
     let outcome = update(&arguments, from_version.as_deref().unwrap_or_default());
     let result = match &outcome {
-        Ok(record) => UpdateResult { app_id: arguments.app_id.clone(), status: "success".into(), source: arguments.source.clone(), from_version, to_version: arguments.expected_version.clone(), install_location: Some(record.install_location.to_string_lossy().into_owned()), executable_path: Some(record.executable_path.to_string_lossy().into_owned()), step: None, installer_exit_code: Some(0), installer_log_path: Some(installer_log_path(&arguments.app_id)?.to_string_lossy().into_owned()), message: None, completed_at_utc: completed_at() },
-        Err(error) => UpdateResult { app_id: arguments.app_id.clone(), status: "failed".into(), source: arguments.source.clone(), from_version, to_version: arguments.expected_version.clone(), install_location: Some(arguments.target_dir.to_string_lossy().into_owned()), executable_path: None, step: Some(error.split(':').next().unwrap_or("UPDATE_FAILED").to_owned()), installer_exit_code: installer_exit_code(error), installer_log_path: Some(installer_log_path(&arguments.app_id)?.to_string_lossy().into_owned()), message: Some(error.clone()), completed_at_utc: completed_at() },
+        Ok(record) => UpdateResult { app_id: arguments.app_id.clone(), operation_id: arguments.operation_id.clone(), status: "success".into(), source: arguments.source.clone(), from_version, to_version: arguments.expected_version.clone(), install_location: Some(record.install_location.to_string_lossy().into_owned()), executable_path: Some(record.executable_path.to_string_lossy().into_owned()), step: None, installer_exit_code: Some(0), installer_log_path: Some(installer_log_path(&arguments.app_id)?.to_string_lossy().into_owned()), message: None, completed_at_utc: completed_at() },
+        Err(error) => UpdateResult { app_id: arguments.app_id.clone(), operation_id: arguments.operation_id.clone(), status: "failed".into(), source: arguments.source.clone(), from_version, to_version: arguments.expected_version.clone(), install_location: Some(arguments.target_dir.to_string_lossy().into_owned()), executable_path: None, step: Some(error.split(':').next().unwrap_or("UPDATE_FAILED").to_owned()), installer_exit_code: installer_exit_code(error), installer_log_path: Some(installer_log_path(&arguments.app_id)?.to_string_lossy().into_owned()), message: Some(error.clone()), completed_at_utc: completed_at() },
     };
-    write_result(&result_path, &result)?;
+    write_result(&arguments.result_path, &result)?;
     outcome.map(|_| ())
 }
 
@@ -189,7 +203,7 @@ fn update(arguments: &Arguments, from_version: &str) -> Result<RegistryRecord, S
 }
 
 fn acquire_lock(app_id: &str) -> Result<UpdateLock, String> {
-    let name = wide(&format!("Local\\HonsenUpdateRunner-{app_id}"));
+    let name = wide(&format!("Global\\HonsenUpdate-{}", app_id.replace('.', "_")));
     unsafe {
         let handle = CreateMutexW(ptr::null(), 1, name.as_ptr());
         if handle.is_null() { return Err("UPDATE_LOCK_FAILED: Could not create the update mutex.".into()); }
@@ -267,7 +281,15 @@ fn release_version(value: &str) -> String { value.trim_start_matches('v').split(
 fn valid_version(value: &str) -> bool { value.split('.').count() >= 3 && value.split('.').all(|part| !part.is_empty() && part.parse::<u32>().is_ok()) }
 fn installer_exit_code(error: &str) -> Option<i32> { error.strip_prefix("INSTALLER_EXIT_").and_then(|value| value.split(':').next()).and_then(|value| value.parse().ok()) }
 
-fn result_path(app_id: &str) -> Result<PathBuf, String> { Ok(PathBuf::from(env::var_os("LOCALAPPDATA").ok_or("UPDATE_RESULT_FAILED: LOCALAPPDATA is unavailable.")?).join("Honsen Program").join("UpdateResults").join(format!("{app_id}.json"))) }
+fn default_result_path(app_id: &str, operation_id: &str) -> Result<PathBuf, String> { Ok(PathBuf::from(env::var_os("LOCALAPPDATA").ok_or("UPDATE_RESULT_FAILED: LOCALAPPDATA is unavailable.")?).join("Honsen Program").join("UpdateResults").join(app_id).join(format!("{operation_id}.json"))) }
+fn preference_path() -> Result<PathBuf, String> { Ok(PathBuf::from(env::var_os("LOCALAPPDATA").ok_or("UPDATE_RESULT_FAILED: LOCALAPPDATA is unavailable.")?).join("Honsen Program").join("UpdatePreferences").join(format!("{APP_ID}.json"))) }
+fn skipped_version() -> Option<String> { preference_path().ok().and_then(|path| fs::read_to_string(path).ok()).and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok()).and_then(|value| value.get("skipVersion")?.as_str().map(str::to_owned)) }
+fn save_skipped_version(version: &str) -> Result<(), String> { let path = preference_path()?; fs::create_dir_all(path.parent().unwrap()).map_err(|error| format!("UPDATE_PREFERENCE_FAILED: {error}"))?; fs::write(path, serde_json::json!({"skipVersion": version}).to_string()).map_err(|error| format!("UPDATE_PREFERENCE_FAILED: {error}")) }
+fn update_choice(version: &str, notes: &str) -> Result<String, String> {
+    let text = format!("发现 Honsen 文档翻译器 {version}。\r\n\r\n{}\r\n\r\n是：立即更新\r\n否：稍后提醒\r\n取消：跳过此版本", notes.chars().take(3000).collect::<String>());
+    let output = Command::new("powershell.exe").args(["-NoProfile", "-STA", "-Command", "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show($env:HONSEN_UPDATE_TEXT, 'Honsen 文档翻译器更新', 'YesNoCancel', 'Information')"]).env("HONSEN_UPDATE_TEXT", text).output().map_err(|error| format!("UPDATE_PROMPT_FAILED: {error}"))?;
+    if output.status.success() { Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned()) } else { Err("UPDATE_PROMPT_FAILED: Could not show update prompt.".into()) }
+}
 fn installer_log_path(app_id: &str) -> Result<PathBuf, String> { Ok(PathBuf::from(env::var_os("LOCALAPPDATA").ok_or("UPDATE_LOG_FAILED: LOCALAPPDATA is unavailable.")?).join("Honsen Program").join("UpdateLogs").join(format!("{app_id}.log"))) }
 fn completed_at() -> String {
     Command::new("powershell.exe").args(["-NoProfile", "-Command", "[DateTime]::UtcNow.ToString('o')"]).output().ok()
@@ -289,5 +311,12 @@ mod tests {
     #[test]
     fn accepts_windows_four_part_file_versions() {
         assert_eq!(release_version("1.4.0.0"), "1.4.0");
+    }
+
+    #[test]
+    fn keeps_the_toolbox_operation_result_path() {
+        let args = vec!["runner".into(), "apply".into(), "--source".into(), "toolbox".into(), "--app-id".into(), APP_ID.into(), "--wait-pid".into(), "0".into(), "--installer".into(), "update.exe".into(), "--sha256".into(), "a".repeat(64), "--target-dir".into(), "C:\\Honsen".into(), "--expected-version".into(), "1.4.3".into(), "--restart".into(), "false".into(), "--operation-id".into(), "op-1".into(), "--result-path".into(), "C:\\Results\\op-1.json".into()];
+        let parsed = parse_arguments(&args).unwrap();
+        assert_eq!(parsed.operation_id, "op-1"); assert_eq!(parsed.result_path, PathBuf::from("C:\\Results\\op-1.json"));
     }
 }

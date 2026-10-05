@@ -44,6 +44,7 @@ Root: HKLM64; Subkey: "{#HonsenRegistryKey}"; ValueType: string; ValueName: "Exe
 Root: HKLM64; Subkey: "{#HonsenRegistryKey}"; ValueType: string; ValueName: "InstallScope"; ValueData: "machine"
 Root: HKLM64; Subkey: "{#HonsenRegistryKey}"; ValueType: string; ValueName: "Publisher"; ValueData: "Honsen"
 Root: HKLM64; Subkey: "{#HonsenRegistryKey}"; ValueType: string; ValueName: "UpdateManifestUrl"; ValueData: "https://api.github.com/repos/etianwang/Honsen-Document-Translator/releases/latest"
+Root: HKLM64; Subkey: "{#HonsenRegistryKey}"; ValueType: string; ValueName: "UpdateUrl"; ValueData: "https://api.github.com/repos/etianwang/Honsen-Document-Translator/releases/latest"
 Root: HKLM64; Subkey: "{#HonsenRegistryKey}"; ValueType: string; ValueName: "UpdateRunnerPath"; ValueData: "{app}\HonsenUpdateRunner.exe"
 Root: HKLM64; Subkey: "{#HonsenRegistryKey}"; ValueType: string; ValueName: "LauncherPath"; ValueData: "{app}\HonsenUpdateRunner.exe"
 
@@ -58,8 +59,8 @@ Type: files; Name: "{autoprograms}\Honsen PDF 翻译器\Honsen PDF 翻译器.lnk
 Type: files; Name: "{app}\honsen.app.json"
 
 [Icons]
-Name: "{group}\Honsen 文档翻译器"; Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch"
-Name: "{autodesktop}\Honsen 文档翻译器"; Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch"; Tasks: desktopicon
+Name: "{group}\Honsen 文档翻译器"; Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch"; IconFilename: "{app}\{#AppExeName}"
+Name: "{autodesktop}\Honsen 文档翻译器"; Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch"; IconFilename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopShortcut}"; Flags: unchecked
