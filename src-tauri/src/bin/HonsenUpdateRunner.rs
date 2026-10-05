@@ -1,7 +1,9 @@
+#![windows_subsystem = "windows"]
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{env, ffi::OsStr, fs, io::Write, os::windows::ffi::OsStrExt, path::{Path, PathBuf}, process::{Command, ExitCode}, ptr, time::{Duration, SystemTime, UNIX_EPOCH}};
-use windows_sys::Win32::{Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_INVALID_PARAMETER, HANDLE, WAIT_OBJECT_0}, System::Threading::{CreateMutexW, OpenProcess, ReleaseMutex, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE}};
+use windows_sys::Win32::{Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_INVALID_PARAMETER, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT}, System::Threading::{CreateMutexW, OpenProcess, QueryFullProcessImageNameW, ReleaseMutex, TerminateProcess, WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE}};
 use winreg::{enums::*, RegKey};
 
 const APP_ID: &str = "honsen.document-translator";
@@ -76,8 +78,8 @@ fn main() -> ExitCode {
         };
     }
     let result = match raw.get(1).map(String::as_str) {
-        Some("launch") => run_launch("app"),
-        Some("repair") => run_launch("repair"),
+        Some("launch") => parse_launch(&raw).and_then(|pid| run_launch("app", pid)),
+        Some("repair") => parse_launch(&raw).and_then(|pid| run_launch("repair", pid)),
         _ => parse_arguments(&raw).and_then(run_update),
     };
     match result {
@@ -86,9 +88,15 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_launch(source: &str) -> Result<(), String> {
+fn parse_launch(raw: &[String]) -> Result<u32, String> {
+    let value = |name: &str| raw.windows(2).find_map(|pair| (pair[0] == name).then(|| pair[1].as_str()));
+    if let Some(app_id) = value("--app-id") { if app_id != APP_ID { return Err("UPDATE_IDENTITY_FAILED: Unexpected appId.".into()); } }
+    value("--wait-pid").map(|value| value.parse().map_err(|_| "RUNNER_ARGUMENTS_INVALID: --wait-pid must be an integer.".into())).transpose().map(|value| value.unwrap_or(0))
+}
+
+fn run_launch(source: &str, wait_pid: u32) -> Result<(), String> {
     let before = registry_record().ok();
-    let outcome = run_launch_inner();
+    let outcome = run_launch_inner(wait_pid);
     let result = match &outcome {
         Ok(record) => UpdateResult { app_id: APP_ID.into(), status: "success".into(), source: source.into(), from_version: before.as_ref().map(|value| value.version.clone()), to_version: record.version.clone(), install_location: Some(record.install_location.to_string_lossy().into_owned()), executable_path: Some(record.executable_path.to_string_lossy().into_owned()), step: None, installer_exit_code: Some(0), installer_log_path: Some(installer_log_path(APP_ID)?.to_string_lossy().into_owned()), message: None, completed_at_utc: completed_at() },
         Err(error) => UpdateResult { app_id: APP_ID.into(), status: "failed".into(), source: source.into(), from_version: before.as_ref().map(|value| value.version.clone()), to_version: before.as_ref().map(|value| value.version.clone()).unwrap_or_default(), install_location: before.as_ref().map(|value| value.install_location.to_string_lossy().into_owned()), executable_path: before.as_ref().map(|value| value.executable_path.to_string_lossy().into_owned()), step: Some(error.split(':').next().unwrap_or("UPDATE_FAILED").into()), installer_exit_code: installer_exit_code(error), installer_log_path: installer_log_path(APP_ID).ok().map(|value| value.to_string_lossy().into_owned()), message: Some(error.clone()), completed_at_utc: completed_at() },
@@ -97,7 +105,7 @@ fn run_launch(source: &str) -> Result<(), String> {
     outcome.map(|_| ())
 }
 
-fn run_launch_inner() -> Result<RegistryRecord, String> {
+fn run_launch_inner(wait_pid: u32) -> Result<RegistryRecord, String> {
     let record = validate_install(&registry_record()?.install_location.canonicalize().map_err(|_| "UPDATE_TARGET_FAILED: InstallLocation is missing.")?)?;
     let client = reqwest::blocking::Client::builder().user_agent("Honsen-Document-Translator-Updater").timeout(Duration::from_secs(60)).build().map_err(|error| format!("UPDATE_CHECK_FAILED: {error}"))?;
     let release = client.get(&record.update_manifest_url).send().map_err(|_| "UPDATE_CHECK_FAILED: Could not contact the update manifest.")?.error_for_status().map_err(|_| "UPDATE_CHECK_FAILED: The update manifest returned an error.")?.json::<GithubRelease>().map_err(|_| "UPDATE_CHECK_FAILED: Release metadata is invalid.")?;
@@ -109,7 +117,7 @@ fn run_launch_inner() -> Result<RegistryRecord, String> {
     let bytes = client.get(&installer.browser_download_url).send().map_err(|_| "UPDATE_DOWNLOAD_FAILED: Could not download installer.")?.bytes().map_err(|_| "UPDATE_DOWNLOAD_FAILED: Could not read installer.")?;
     let path = env::temp_dir().join(format!("honsen-document-translator-{}.exe", release.tag_name));
     fs::write(&path, bytes).map_err(|error| format!("UPDATE_DOWNLOAD_FAILED: {error}"))?;
-    run_update(Arguments { source: "app".into(), app_id: APP_ID.into(), wait_pid: 0, installer: path, sha256, target_dir: record.install_location, expected_version: release.tag_name.trim_start_matches('v').into(), restart: true })?;
+    run_update(Arguments { source: "app".into(), app_id: APP_ID.into(), wait_pid, installer: path, sha256, target_dir: record.install_location, expected_version: release.tag_name.trim_start_matches('v').into(), restart: true })?;
     registry_record()
 }
 
@@ -164,7 +172,7 @@ fn update(arguments: &Arguments, from_version: &str) -> Result<RegistryRecord, S
     let before = validate_install(&target)?;
     if before.version != from_version { return Err("UPDATE_REGISTRY_FAILED: Registry version changed before update started.".into()); }
     verify_hash(&arguments.installer, &arguments.sha256)?;
-    wait_for_exit(arguments.wait_pid)?;
+    wait_for_exit(arguments.wait_pid, &before.executable_path)?;
     let log = installer_log_path(&arguments.app_id)?;
     if let Some(parent) = log.parent() { fs::create_dir_all(parent).map_err(|error| format!("UPDATE_LOG_FAILED: {error}"))?; }
     let exit = Command::new(&arguments.installer).args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", &format!("/DIR={}", target.display()), &format!("/LOG={}", log.display())])
@@ -228,17 +236,22 @@ fn verify_hash(path: &Path, expected: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn wait_for_exit(pid: u32) -> Result<(), String> {
+fn wait_for_exit(pid: u32, expected_executable: &Path) -> Result<(), String> {
     if pid == 0 { return Ok(()); }
     unsafe {
-        let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+        let handle = OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, 0, pid);
         if handle.is_null() {
             return if GetLastError() == ERROR_INVALID_PARAMETER { Ok(()) }
                 else { Err("UPDATE_WAIT_FAILED: Could not open the target process to wait for it.".into()) };
         }
-        let result = WaitForSingleObject(handle, INFINITE);
-        CloseHandle(handle);
-        if result == WAIT_OBJECT_0 { Ok(()) } else { Err("UPDATE_WAIT_FAILED: Could not wait for the target process.".into()) }
+        let result = WaitForSingleObject(handle, 30_000);
+        if result == WAIT_OBJECT_0 { CloseHandle(handle); return Ok(()); }
+        if result != WAIT_TIMEOUT { CloseHandle(handle); return Err("UPDATE_WAIT_FAILED: Could not wait for the target process.".into()); }
+        let mut image = vec![0u16; 32_768]; let mut size = image.len() as u32;
+        let verified = QueryFullProcessImageNameW(handle, 0, image.as_mut_ptr(), &mut size) != 0
+            && PathBuf::from(String::from_utf16_lossy(&image[..size as usize])).canonicalize().ok().as_deref() == expected_executable.canonicalize().ok().as_deref();
+        if !verified || TerminateProcess(handle, 1) == 0 || WaitForSingleObject(handle, INFINITE) != WAIT_OBJECT_0 { CloseHandle(handle); return Err("UPDATE_WAIT_FAILED: The old application did not exit safely.".into()); }
+        CloseHandle(handle); Ok(())
     }
 }
 

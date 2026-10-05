@@ -278,7 +278,7 @@ async fn check_for_update() -> Result<UpdateStatus, String> {
 #[tauri::command]
 fn install_update(app: tauri::AppHandle) -> Result<(), String> {
     let (_, runner) = installed_update_paths()?;
-    background_command(runner).arg("launch").spawn().map_err(|error| format!("UPDATE_RUNNER_START_FAILED: {error}"))?;
+    background_command(runner).args(["launch", "--app-id", HONSEN_APP_ID, "--wait-pid", &std::process::id().to_string()]).spawn().map_err(|error| format!("UPDATE_RUNNER_START_FAILED: {error}"))?;
     app.exit(0);
     Ok(())
 }
