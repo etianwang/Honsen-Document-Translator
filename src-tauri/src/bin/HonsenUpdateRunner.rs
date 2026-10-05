@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{env, ffi::OsStr, fs, io::Write, os::windows::ffi::OsStrExt, path::{Path, PathBuf}, process::{Child, Command, ExitCode}, ptr, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{env, ffi::OsStr, fs, io::Write, os::windows::{ffi::OsStrExt, process::CommandExt}, path::{Path, PathBuf}, process::{Child, Command, ExitCode}, ptr, time::{Duration, SystemTime, UNIX_EPOCH}};
 use windows_sys::Win32::{Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_INVALID_PARAMETER, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT}, System::Threading::{CreateMutexW, OpenProcess, QueryFullProcessImageNameW, ReleaseMutex, TerminateProcess, WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE}};
 use winreg::{enums::*, RegKey};
 
@@ -81,6 +81,7 @@ impl Drop for StartupNotice {
 
 fn main() -> ExitCode {
     let raw = env::args().collect::<Vec<_>>();
+    if raw.iter().any(|value| value == "--help" || value == "-h") { print_help(raw.get(1).map(String::as_str)); return ExitCode::SUCCESS; }
     if !raw.iter().any(|value| value == "--runner-copied") {
         return match copy_and_relaunch(&raw) {
             Ok(()) => ExitCode::SUCCESS,
@@ -98,18 +99,29 @@ fn main() -> ExitCode {
     }
 }
 
+fn print_help(command: Option<&str>) {
+    let usage = match command {
+        Some("launch") | Some("repair") => "HonsenUpdateRunner.exe launch --app-id honsen.document-translator [--source app|toolbox] [--wait-pid PID] [--operation-id ID] [--result-path PATH]",
+        Some("apply") => "HonsenUpdateRunner.exe apply --source app|toolbox --app-id honsen.document-translator --wait-pid PID --installer PATH --sha256 SHA256 --target-dir PATH --expected-version VERSION --restart true|false [--operation-id ID] [--result-path PATH]",
+        _ => "HonsenUpdateRunner.exe <launch|repair|apply> [options]",
+    };
+    println!("{usage}");
+}
+
 fn parse_launch(raw: &[String]) -> Result<LaunchArguments, String> {
     let value = |name: &str| raw.windows(2).find_map(|pair| (pair[0] == name).then(|| pair[1].as_str()));
     if let Some(app_id) = value("--app-id") { if app_id != APP_ID { return Err("UPDATE_IDENTITY_FAILED: Unexpected appId.".into()); } }
     let wait_pid = value("--wait-pid").map(|value| value.parse().map_err(|_| "RUNNER_ARGUMENTS_INVALID: --wait-pid must be an integer.".to_owned())).transpose()?.unwrap_or(0);
     let operation_id = value("--operation-id").unwrap_or("launch").to_owned();
     let result_path = value("--result-path").map(PathBuf::from).unwrap_or(default_result_path(APP_ID, &operation_id)?);
-    Ok(LaunchArguments { source: value("--source").unwrap_or("app").to_owned(), wait_pid, operation_id, result_path })
+    let source = value("--source").unwrap_or("app");
+    if source != "app" && source != "toolbox" { return Err("RUNNER_ARGUMENTS_INVALID: --source must be app or toolbox.".into()); }
+    Ok(LaunchArguments { source: source.to_owned(), wait_pid, operation_id, result_path })
 }
 
 fn run_launch(arguments: LaunchArguments) -> Result<(), String> {
     let _lock = acquire_lock(APP_ID)?;
-    let _notice = StartupNotice(Command::new("powershell.exe").args(["-NoProfile", "-WindowStyle", "Hidden", "-STA", "-Command", "Add-Type -AssemblyName PresentationFramework; $w=New-Object System.Windows.Window; $w.Title='Honsen 文档翻译器'; $w.SizeToContent='WidthAndHeight'; $w.WindowStartupLocation='CenterScreen'; $w.ResizeMode='NoResize'; $w.Topmost=$true; $t=New-Object System.Windows.Controls.TextBlock; $t.Text='正在检查更新，请稍候…'; $t.Margin='28'; $t.FontSize=16; $w.Content=$t; $w.ShowDialog() | Out-Null"]).spawn().ok());
+    let _notice = StartupNotice(hidden_powershell().args(["-NoProfile", "-WindowStyle", "Hidden", "-STA", "-Command", "Add-Type -AssemblyName PresentationFramework; $w=New-Object System.Windows.Window; $w.Title='Honsen 文档翻译器'; $w.SizeToContent='WidthAndHeight'; $w.WindowStartupLocation='CenterScreen'; $w.ResizeMode='NoResize'; $w.Topmost=$true; $t=New-Object System.Windows.Controls.TextBlock; $t.Text='正在检查更新，请稍候…'; $t.Margin='28'; $t.FontSize=16; $w.Content=$t; $w.ShowDialog() | Out-Null"]).spawn().ok());
     let before = registry_record().ok();
     let outcome = run_launch_inner(arguments.wait_pid, &arguments.operation_id, &arguments.result_path);
     let result = match &outcome {
@@ -276,8 +288,10 @@ fn wait_for_exit(pid: u32, expected_executable: &Path) -> Result<(), String> {
     }
 }
 
+fn hidden_powershell() -> Command { let mut command = Command::new("powershell.exe"); command.creation_flags(0x08000000); command }
+
 fn executable_version(executable: &Path) -> Result<String, String> {
-    let output = Command::new("powershell.exe").args(["-NoProfile", "-Command", "(Get-Item -LiteralPath $env:HONSEN_UPDATE_EXE).VersionInfo.FileVersion"]).env("HONSEN_UPDATE_EXE", executable)
+    let output = hidden_powershell().args(["-NoProfile", "-Command", "(Get-Item -LiteralPath $env:HONSEN_UPDATE_EXE).VersionInfo.FileVersion"]).env("HONSEN_UPDATE_EXE", executable)
         .output().map_err(|error| format!("UPDATE_VERIFICATION_FAILED: {error}"))?;
     let version = String::from_utf8_lossy(&output.stdout).trim().trim_start_matches('v').to_owned();
     if output.status.success() && !version.is_empty() { Ok(version) } else { Err("UPDATE_VERIFICATION_FAILED: Could not read the main EXE version.".into()) }
@@ -294,12 +308,12 @@ fn skipped_version() -> Option<String> { preference_path().ok().and_then(|path| 
 fn save_skipped_version(version: &str) -> Result<(), String> { let path = preference_path()?; fs::create_dir_all(path.parent().unwrap()).map_err(|error| format!("UPDATE_PREFERENCE_FAILED: {error}"))?; fs::write(path, serde_json::json!({"skipVersion": version}).to_string()).map_err(|error| format!("UPDATE_PREFERENCE_FAILED: {error}")) }
 fn update_choice(version: &str, notes: &str) -> Result<String, String> {
     let text = format!("发现 Honsen 文档翻译器 {version}。\r\n\r\n{}\r\n\r\n是：立即更新\r\n否：稍后提醒\r\n取消：跳过此版本", notes.chars().take(3000).collect::<String>());
-    let output = Command::new("powershell.exe").args(["-NoProfile", "-STA", "-Command", "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show($env:HONSEN_UPDATE_TEXT, 'Honsen 文档翻译器更新', 'YesNoCancel', 'Information')"]).env("HONSEN_UPDATE_TEXT", text).output().map_err(|error| format!("UPDATE_PROMPT_FAILED: {error}"))?;
+    let output = hidden_powershell().args(["-NoProfile", "-STA", "-Command", "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show($env:HONSEN_UPDATE_TEXT, 'Honsen 文档翻译器更新', 'YesNoCancel', 'Information')"]).env("HONSEN_UPDATE_TEXT", text).output().map_err(|error| format!("UPDATE_PROMPT_FAILED: {error}"))?;
     if output.status.success() { Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned()) } else { Err("UPDATE_PROMPT_FAILED: Could not show update prompt.".into()) }
 }
 fn installer_log_path(app_id: &str) -> Result<PathBuf, String> { Ok(PathBuf::from(env::var_os("LOCALAPPDATA").ok_or("UPDATE_LOG_FAILED: LOCALAPPDATA is unavailable.")?).join("Honsen Program").join("UpdateLogs").join(format!("{app_id}.log"))) }
 fn completed_at() -> String {
-    Command::new("powershell.exe").args(["-NoProfile", "-Command", "[DateTime]::UtcNow.ToString('o')"]).output().ok()
+    hidden_powershell().args(["-NoProfile", "-Command", "[DateTime]::UtcNow.ToString('o')"]).output().ok()
         .filter(|output| output.status.success()).map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned()).filter(|value| !value.is_empty())
         .unwrap_or_else(|| SystemTime::now().duration_since(UNIX_EPOCH).map(|value| value.as_secs().to_string()).unwrap_or_default())
 }
@@ -325,5 +339,12 @@ mod tests {
         let args = vec!["runner".into(), "apply".into(), "--source".into(), "toolbox".into(), "--app-id".into(), APP_ID.into(), "--wait-pid".into(), "0".into(), "--installer".into(), "update.exe".into(), "--sha256".into(), "a".repeat(64), "--target-dir".into(), "C:\\Honsen".into(), "--expected-version".into(), "1.4.3".into(), "--restart".into(), "false".into(), "--operation-id".into(), "op-1".into(), "--result-path".into(), "C:\\Results\\op-1.json".into()];
         let parsed = parse_arguments(&args).unwrap();
         assert_eq!(parsed.operation_id, "op-1"); assert_eq!(parsed.result_path, PathBuf::from("C:\\Results\\op-1.json"));
+    }
+
+    #[test]
+    fn accepts_toolbox_launch_result_arguments() {
+        let args = vec!["runner".into(), "launch".into(), "--source".into(), "toolbox".into(), "--operation-id".into(), "open-1".into(), "--result-path".into(), "C:\\Results\\open-1.json".into()];
+        let parsed = parse_launch(&args).unwrap();
+        assert_eq!(parsed.source, "toolbox"); assert_eq!(parsed.operation_id, "open-1");
     }
 }
