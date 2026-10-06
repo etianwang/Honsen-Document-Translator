@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{env, ffi::OsStr, fs, io::Write, os::windows::{ffi::OsStrExt, process::CommandExt}, path::{Path, PathBuf}, process::{Child, Command, ExitCode}, ptr, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{env, ffi::OsStr, fs, io::{Read, Write}, os::windows::{ffi::OsStrExt, process::CommandExt}, path::{Path, PathBuf}, process::{Child, Command, ExitCode}, ptr, time::{Duration, SystemTime, UNIX_EPOCH}};
 use windows_sys::Win32::{Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_INVALID_PARAMETER, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT}, System::Threading::{CreateMutexW, OpenProcess, QueryFullProcessImageNameW, ReleaseMutex, TerminateProcess, WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE}};
 use winreg::{enums::*, RegKey};
 
@@ -64,7 +64,7 @@ struct UpdateResult {
 }
 
 struct UpdateLock(HANDLE);
-struct StartupNotice(Option<Child>);
+struct ProgressWindow { path: PathBuf, host: Child }
 
 #[derive(Deserialize)] struct GithubRelease { tag_name: String, draft: bool, prerelease: bool, body: Option<String>, assets: Vec<GithubAsset> }
 #[derive(Deserialize)] struct GithubAsset { name: String, browser_download_url: String }
@@ -75,8 +75,23 @@ impl Drop for UpdateLock {
     fn drop(&mut self) { unsafe { ReleaseMutex(self.0); CloseHandle(self.0); } }
 }
 
-impl Drop for StartupNotice {
-    fn drop(&mut self) { if let Some(child) = self.0.as_mut() { let _ = child.kill(); } }
+impl ProgressWindow {
+    fn start() -> Result<Self, String> {
+        let directory = ui_directory()?;
+        let path = directory.join("progress.txt");
+        fs::write(&path, "-1|正在检查更新，请稍候…").map_err(|error| format!("UPDATE_UI_FAILED: {error}"))?;
+        let script = directory.join("progress.ps1");
+        fs::write(&script, progress_script()).map_err(|error| format!("UPDATE_UI_FAILED: {error}"))?;
+        let host = wscript(&script, true, [("HONSEN_PROGRESS_FILE", path.as_os_str())])?;
+        Ok(Self { path, host })
+    }
+
+    fn set(&self, percent: u8, message: &str) { let _ = fs::write(&self.path, format!("{percent}|{message}")); }
+    fn close(&mut self) { self.set(100, "完成"); let _ = self.host.wait(); }
+}
+
+impl Drop for ProgressWindow {
+    fn drop(&mut self) { self.close(); }
 }
 
 fn main() -> ExitCode {
@@ -121,7 +136,6 @@ fn parse_launch(raw: &[String]) -> Result<LaunchArguments, String> {
 
 fn run_launch(arguments: LaunchArguments) -> Result<(), String> {
     let _lock = acquire_lock(APP_ID)?;
-    let _notice = StartupNotice(hidden_powershell().args(["-NoProfile", "-WindowStyle", "Hidden", "-STA", "-Command", "Add-Type -AssemblyName PresentationFramework; $w=New-Object System.Windows.Window; $w.Title='Honsen 文档翻译器'; $w.SizeToContent='WidthAndHeight'; $w.WindowStartupLocation='CenterScreen'; $w.ResizeMode='NoResize'; $w.Topmost=$true; $t=New-Object System.Windows.Controls.TextBlock; $t.Text='正在检查更新，请稍候…'; $t.Margin='28'; $t.FontSize=16; $w.Content=$t; $w.ShowDialog() | Out-Null"]).spawn().ok());
     let before = registry_record().ok();
     let outcome = run_launch_inner(arguments.wait_pid, &arguments.operation_id, &arguments.result_path);
     let result = match &outcome {
@@ -133,24 +147,34 @@ fn run_launch(arguments: LaunchArguments) -> Result<(), String> {
 }
 
 fn run_launch_inner(wait_pid: u32, operation_id: &str, result_path: &Path) -> Result<RegistryRecord, String> {
+    let mut progress = ProgressWindow::start()?;
     let record = validate_install(&registry_record()?.install_location.canonicalize().map_err(|_| "UPDATE_TARGET_FAILED: InstallLocation is missing.")?)?;
     let client = reqwest::blocking::Client::builder().user_agent("Honsen-Document-Translator-Updater").timeout(Duration::from_secs(60)).build().map_err(|error| format!("UPDATE_CHECK_FAILED: {error}"))?;
     let release = client.get(&record.update_manifest_url).send().map_err(|_| "UPDATE_CHECK_FAILED: Could not contact the update manifest.")?.error_for_status().map_err(|_| "UPDATE_CHECK_FAILED: The update manifest returned an error.")?.json::<GithubRelease>().map_err(|_| "UPDATE_CHECK_FAILED: Release metadata is invalid.")?;
-    if release.draft || release.prerelease || !is_newer(&release.tag_name, &record.version) || skipped_version().as_deref() == Some(release.tag_name.trim_start_matches('v')) { Command::new(&record.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?; return Ok(record); }
+    if release.draft || release.prerelease || !is_newer(&release.tag_name, &record.version) || skipped_version().as_deref() == Some(release.tag_name.trim_start_matches('v')) {
+        progress.set(100, "已是最新版本，正在启动…"); drop(progress);
+        Command::new(&record.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?;
+        return Ok(record);
+    }
+    progress.close();
     match update_choice(&release.tag_name, release.body.as_deref().unwrap_or("此版本未提供更新说明。"))?.as_str() {
         "Yes" => {},
         "Cancel" => { save_skipped_version(release.tag_name.trim_start_matches('v'))?; Command::new(&record.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?; return Ok(record); },
         _ => { Command::new(&record.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?; return Ok(record); },
     }
+    let progress = ProgressWindow::start()?;
+    progress.set(0, "正在下载更新… 0%");
     let installer = release.assets.iter().find(|asset| asset.name == "Honsen-Document-Translator-Setup.exe").ok_or("UPDATE_CHECK_FAILED: Release installer is missing.")?;
     let sums = release.assets.iter().find(|asset| asset.name == "SHA256SUMS.json").ok_or("UPDATE_CHECK_FAILED: Release checksums are missing.")?;
     let sums = client.get(&sums.browser_download_url).send().map_err(|_| "UPDATE_CHECK_FAILED: Could not download checksums.")?.json::<Checksums>().map_err(|_| "UPDATE_CHECK_FAILED: Checksums are invalid.")?;
     let sha256 = sums.assets.into_iter().find(|entry| entry.name == installer.name).map(|entry| entry.sha256).ok_or("UPDATE_CHECK_FAILED: Installer SHA-256 is missing.")?;
-    let bytes = client.get(&installer.browser_download_url).send().map_err(|_| "UPDATE_DOWNLOAD_FAILED: Could not download installer.")?.bytes().map_err(|_| "UPDATE_DOWNLOAD_FAILED: Could not read installer.")?;
     let path = env::temp_dir().join(format!("honsen-document-translator-{}.exe", release.tag_name));
-    fs::write(&path, bytes).map_err(|error| format!("UPDATE_DOWNLOAD_FAILED: {error}"))?;
-    run_update(Arguments { source: "app".into(), app_id: APP_ID.into(), wait_pid, installer: path, sha256, target_dir: record.install_location, expected_version: release.tag_name.trim_start_matches('v').into(), restart: true, result_path: result_path.to_path_buf(), operation_id: operation_id.into() })?;
-    registry_record()
+    download_with_progress(client.get(&installer.browser_download_url).send().map_err(|_| "UPDATE_DOWNLOAD_FAILED: Could not download installer.")?, &path, &progress)?;
+    progress.set(86, "正在校验更新包…");
+    let arguments = Arguments { source: "app".into(), app_id: APP_ID.into(), wait_pid, installer: path, sha256, target_dir: record.install_location, expected_version: release.tag_name.trim_start_matches('v').into(), restart: true, result_path: result_path.to_path_buf(), operation_id: operation_id.into() };
+    update(&arguments, &record.version, Some(&progress))?;
+    progress.set(100, "更新完成，正在重新打开…");
+    Ok(registry_record()?)
 }
 
 fn is_newer(candidate: &str, current: &str) -> bool { let parse = |value: &str| value.trim_start_matches('v').split('.').map(str::parse::<u32>).collect::<Result<Vec<_>, _>>(); matches!((parse(candidate), parse(current)), (Ok(candidate), Ok(current)) if candidate > current) }
@@ -190,7 +214,7 @@ fn parse_arguments(raw: &[String]) -> Result<Arguments, String> {
 fn run_update(arguments: Arguments) -> Result<(), String> {
     if arguments.app_id != APP_ID { return Err("UPDATE_IDENTITY_FAILED: Unexpected appId.".into()); }
     let from_version = registry_record().ok().map(|record| record.version);
-    let outcome = update(&arguments, from_version.as_deref().unwrap_or_default());
+    let outcome = update(&arguments, from_version.as_deref().unwrap_or_default(), None);
     let result = match &outcome {
         Ok(record) => UpdateResult { app_id: arguments.app_id.clone(), operation_id: arguments.operation_id.clone(), status: "success".into(), source: arguments.source.clone(), from_version, to_version: arguments.expected_version.clone(), install_location: Some(record.install_location.to_string_lossy().into_owned()), executable_path: Some(record.executable_path.to_string_lossy().into_owned()), step: None, installer_exit_code: Some(0), installer_log_path: Some(installer_log_path(&arguments.app_id)?.to_string_lossy().into_owned()), message: None, completed_at_utc: completed_at() },
         Err(error) => UpdateResult { app_id: arguments.app_id.clone(), operation_id: arguments.operation_id.clone(), status: "failed".into(), source: arguments.source.clone(), from_version, to_version: arguments.expected_version.clone(), install_location: Some(arguments.target_dir.to_string_lossy().into_owned()), executable_path: None, step: Some(error.split(':').next().unwrap_or("UPDATE_FAILED").to_owned()), installer_exit_code: installer_exit_code(error), installer_log_path: Some(installer_log_path(&arguments.app_id)?.to_string_lossy().into_owned()), message: Some(error.clone()), completed_at_utc: completed_at() },
@@ -199,19 +223,22 @@ fn run_update(arguments: Arguments) -> Result<(), String> {
     outcome.map(|_| ())
 }
 
-fn update(arguments: &Arguments, from_version: &str) -> Result<RegistryRecord, String> {
+fn update(arguments: &Arguments, from_version: &str, progress: Option<&ProgressWindow>) -> Result<RegistryRecord, String> {
     let _lock = acquire_lock(&arguments.app_id)?;
     let target = arguments.target_dir.canonicalize().map_err(|_| "UPDATE_TARGET_FAILED: Target directory does not exist.".to_owned())?;
     let before = validate_install(&target)?;
     if before.version != from_version { return Err("UPDATE_REGISTRY_FAILED: Registry version changed before update started.".into()); }
     verify_hash(&arguments.installer, &arguments.sha256)?;
+    if let Some(progress) = progress { progress.set(88, "正在等待旧版本退出…"); }
     wait_for_exit(arguments.wait_pid, &before.executable_path)?;
+    if let Some(progress) = progress { progress.set(90, "正在解压并安装更新…"); }
     let log = installer_log_path(&arguments.app_id)?;
     if let Some(parent) = log.parent() { fs::create_dir_all(parent).map_err(|error| format!("UPDATE_LOG_FAILED: {error}"))?; }
     let exit = Command::new(&arguments.installer).args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", &format!("/DIR={}", before.install_location.display()), &format!("/LOG={}", log.display())])
         .status().map_err(|error| format!("UPDATE_INSTALLER_START_FAILED: {error}"))?;
     if !exit.success() { return Err(format!("INSTALLER_EXIT_{}: Inno Setup exited with {:?}.", exit.code().unwrap_or(-1), exit.code())); }
     if fs::read_to_string(&log).map_or(true, |content| content.trim().is_empty()) { return Err("UPDATE_LOG_FAILED: Inno Setup did not create a readable installation log.".into()); }
+    if let Some(progress) = progress { progress.set(96, "正在验证新版本…"); }
     let after = validate_install(&target)?;
     if after.install_location != target || after.version != arguments.expected_version { return Err("UPDATE_VERIFICATION_FAILED: Installed registry state does not match the requested version and directory.".into()); }
     let manifest = load_manifest(&target)?;
@@ -290,6 +317,68 @@ fn wait_for_exit(pid: u32, expected_executable: &Path) -> Result<(), String> {
 
 fn hidden_powershell() -> Command { let mut command = Command::new("powershell.exe"); command.creation_flags(0x08000000); command }
 
+fn ui_directory() -> Result<PathBuf, String> {
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_nanos();
+    let directory = env::temp_dir().join("Honsen Program").join("UpdateRunner").join(format!("ui-{stamp}"));
+    fs::create_dir_all(&directory).map_err(|error| format!("UPDATE_UI_FAILED: {error}"))?;
+    Ok(directory)
+}
+
+fn wscript<'a>(script: &Path, wait: bool, environment: impl IntoIterator<Item = (&'a str, &'a OsStr)>) -> Result<Child, String> {
+    let launcher = script.with_extension("vbs");
+    let script = script.display().to_string().replace('"', "\"\"");
+    fs::write(&launcher, format!("Set shell = CreateObject(\"WScript.Shell\")\nWScript.Quit shell.Run(\"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File \"\"{script}\"\"\", 0, {})", if wait { "True" } else { "False" }))
+        .map_err(|error| format!("UPDATE_UI_FAILED: {error}"))?;
+    let mut command = Command::new("wscript.exe");
+    command.arg(launcher).creation_flags(0x08000000);
+    for (name, value) in environment { command.env(name, value); }
+    command.spawn().map_err(|error| format!("UPDATE_UI_FAILED: {error}"))
+}
+
+fn progress_script() -> &'static str { r#"
+Add-Type -AssemblyName PresentationFramework
+$w = New-Object System.Windows.Window
+$w.Title = 'Honsen 文档翻译器更新'; $w.Width = 410; $w.Height = 150
+$w.WindowStartupLocation = 'CenterScreen'; $w.ResizeMode = 'NoResize'; $w.Topmost = $true
+$panel = New-Object System.Windows.Controls.StackPanel; $panel.Margin = '24'
+$text = New-Object System.Windows.Controls.TextBlock; $text.FontSize = 15; $text.Text = '正在检查更新，请稍候…'
+$bar = New-Object System.Windows.Controls.ProgressBar; $bar.Height = 16; $bar.Margin = '0,18,0,0'; $bar.IsIndeterminate = $true
+$panel.Children.Add($text); $panel.Children.Add($bar); $w.Content = $panel
+$timer = New-Object System.Windows.Threading.DispatcherTimer; $timer.Interval = [TimeSpan]::FromMilliseconds(120)
+$timer.Add_Tick({
+  if (-not (Test-Path -LiteralPath $env:HONSEN_PROGRESS_FILE)) { $w.Close(); return }
+  $parts = [IO.File]::ReadAllText($env:HONSEN_PROGRESS_FILE).Split('|', 2)
+  if ($parts[0] -eq '100') { $w.Close(); return }
+  $text.Text = $parts[1]
+  $bar.IsIndeterminate = ($parts[0] -eq '-1')
+  if (-not $bar.IsIndeterminate) { $bar.Value = [Math]::Min(99, [int]$parts[0]) }
+})
+$timer.Start(); $w.ShowDialog() | Out-Null
+"# }
+
+fn choice_script() -> &'static str { r#"
+Add-Type -AssemblyName PresentationFramework
+$choice = [System.Windows.MessageBox]::Show($env:HONSEN_UPDATE_TEXT, 'Honsen 文档翻译器更新', 'YesNoCancel', 'Information')
+if ($choice -eq 'Yes') { exit 10 }; if ($choice -eq 'No') { exit 11 }; exit 12
+"# }
+
+fn download_with_progress(mut response: reqwest::blocking::Response, path: &Path, progress: &ProgressWindow) -> Result<(), String> {
+    let total = response.content_length();
+    let mut file = fs::File::create(path).map_err(|error| format!("UPDATE_DOWNLOAD_FAILED: {error}"))?;
+    let mut buffer = [0u8; 64 * 1024]; let mut downloaded = 0u64; let mut displayed = u8::MAX;
+    loop {
+        let count = response.read(&mut buffer).map_err(|_| "UPDATE_DOWNLOAD_FAILED: Could not read installer.")?;
+        if count == 0 { break; }
+        file.write_all(&buffer[..count]).map_err(|error| format!("UPDATE_DOWNLOAD_FAILED: {error}"))?;
+        downloaded += count as u64;
+        if let Some(total) = total {
+            let percent = ((downloaded.saturating_mul(85) / total).min(85)) as u8;
+            if percent != displayed { progress.set(percent, &format!("正在下载更新… {}%", (downloaded.saturating_mul(100) / total).min(100))); displayed = percent; }
+        } else { progress.set(0, "正在下载更新…"); }
+    }
+    Ok(())
+}
+
 fn executable_version(executable: &Path) -> Result<String, String> {
     let output = hidden_powershell().args(["-NoProfile", "-Command", "(Get-Item -LiteralPath $env:HONSEN_UPDATE_EXE).VersionInfo.FileVersion"]).env("HONSEN_UPDATE_EXE", executable)
         .output().map_err(|error| format!("UPDATE_VERIFICATION_FAILED: {error}"))?;
@@ -308,8 +397,11 @@ fn skipped_version() -> Option<String> { preference_path().ok().and_then(|path| 
 fn save_skipped_version(version: &str) -> Result<(), String> { let path = preference_path()?; fs::create_dir_all(path.parent().unwrap()).map_err(|error| format!("UPDATE_PREFERENCE_FAILED: {error}"))?; fs::write(path, serde_json::json!({"skipVersion": version}).to_string()).map_err(|error| format!("UPDATE_PREFERENCE_FAILED: {error}")) }
 fn update_choice(version: &str, notes: &str) -> Result<String, String> {
     let text = format!("发现 Honsen 文档翻译器 {version}。\r\n\r\n{}\r\n\r\n是：立即更新\r\n否：稍后提醒\r\n取消：跳过此版本", notes.chars().take(3000).collect::<String>());
-    let output = hidden_powershell().args(["-NoProfile", "-STA", "-Command", "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show($env:HONSEN_UPDATE_TEXT, 'Honsen 文档翻译器更新', 'YesNoCancel', 'Information')"]).env("HONSEN_UPDATE_TEXT", text).output().map_err(|error| format!("UPDATE_PROMPT_FAILED: {error}"))?;
-    if output.status.success() { Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned()) } else { Err("UPDATE_PROMPT_FAILED: Could not show update prompt.".into()) }
+    let directory = ui_directory()?; let script = directory.join("choice.ps1");
+    fs::write(&script, choice_script()).map_err(|error| format!("UPDATE_PROMPT_FAILED: {error}"))?;
+    let text = OsStr::new(&text);
+    let exit = wscript(&script, true, [("HONSEN_UPDATE_TEXT", text)])?.wait().map_err(|error| format!("UPDATE_PROMPT_FAILED: {error}"))?.code();
+    match exit { Some(10) => Ok("Yes".into()), Some(11) => Ok("No".into()), Some(12) => Ok("Cancel".into()), _ => Err("UPDATE_PROMPT_FAILED: Could not show update prompt.".into()) }
 }
 fn installer_log_path(app_id: &str) -> Result<PathBuf, String> { Ok(PathBuf::from(env::var_os("LOCALAPPDATA").ok_or("UPDATE_LOG_FAILED: LOCALAPPDATA is unavailable.")?).join("Honsen Program").join("UpdateLogs").join(format!("{app_id}.log"))) }
 fn completed_at() -> String {

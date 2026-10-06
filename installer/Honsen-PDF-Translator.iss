@@ -1,5 +1,5 @@
 #define AppName "Honsen Document Translator"
-#define AppVersion "1.4.6"
+#define AppVersion "1.4.7"
 #define AppExeName "HonsenPdfTranslator.exe"
 #define HonsenAppId "honsen.document-translator"
 #define HonsenRegistryKey "Software\Honsen Program\Apps\" + HonsenAppId
