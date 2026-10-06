@@ -276,6 +276,22 @@ async fn check_for_update() -> Result<UpdateStatus, String> {
 }
 
 #[tauri::command]
+fn app_version() -> Result<String, String> {
+    let executable = std::env::current_exe().map_err(|error| format!("UPDATE_MANIFEST_FAILED: {error}"))?;
+    let directory = executable.parent().ok_or("UPDATE_MANIFEST_FAILED: Application directory is unavailable.")?;
+    let content = fs::read_to_string(directory.join("honsen.app.json")).map_err(|_| "UPDATE_MANIFEST_FAILED: honsen.app.json is missing or not UTF-8.")?;
+    manifest_version(&content, executable.file_name().and_then(|value| value.to_str()))
+}
+
+fn manifest_version(content: &str, executable_name: Option<&str>) -> Result<String, String> {
+    let manifest: HonsenAppManifest = serde_json::from_str(&content).map_err(|_| "UPDATE_MANIFEST_FAILED: honsen.app.json is invalid.")?;
+    if manifest.app_id != HONSEN_APP_ID || manifest.executable != HONSEN_MAIN_EXE || executable_name != Some(manifest.executable.as_str()) {
+        return Err("UPDATE_MANIFEST_FAILED: honsen.app.json does not identify this installed application.".into());
+    }
+    Ok(manifest.version)
+}
+
+#[tauri::command]
 fn install_update(app: tauri::AppHandle) -> Result<(), String> {
     let (_, runner, _) = installed_update_paths()?;
     background_command(runner).args(["launch", "--app-id", HONSEN_APP_ID, "--wait-pid", &std::process::id().to_string()]).spawn().map_err(|error| format!("UPDATE_RUNNER_START_FAILED: {error}"))?;
@@ -784,7 +800,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, convert_source_pdf_to_docx, translate_pdf_via_docx, translate_document_file, render_document_preview, export_document_to_pdf, export_document_file, save_translated_text_file, validate_code_file, release_document_preview, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, install_update, record_diagnostic])
+        .invoke_handler(tauri::generate_handler![export_docx_to_pdf, convert_source_pdf_to_docx, translate_pdf_via_docx, translate_document_file, render_document_preview, export_document_to_pdf, export_document_file, save_translated_text_file, validate_code_file, release_document_preview, translate_deepl, save_deepl_api_key, deepl_key_status, ocr_pdf_page, check_for_update, app_version, install_update, record_diagnostic])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -860,6 +876,12 @@ mod tests {
         assert!(is_newer_version("v0.1.1", "0.1.0"));
         assert!(!is_newer_version("0.1.0", "0.1.0"));
         assert!(!is_newer_version("latest", "0.1.0"));
+    }
+
+    #[test]
+    fn reads_the_displayed_version_from_the_honsen_manifest() {
+        let manifest = r#"{"appId":"honsen.document-translator","version":"1.4.7","executable":"HonsenPdfTranslator.exe","updateRunner":"HonsenUpdateRunner.exe","updateManifestUrl":"https://example.invalid"}"#;
+        assert_eq!(manifest_version(manifest, Some(HONSEN_MAIN_EXE)).unwrap(), "1.4.7");
     }
 
     #[test]

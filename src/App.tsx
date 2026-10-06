@@ -91,7 +91,7 @@ function App() {
   const [glossaryEntries, setGlossaryEntries] = useState<GlossaryEntry[]>(defaultGlossaryEntries);
   const activeAbortController = useRef<AbortController | undefined>(undefined);
 
-  useEffect(() => { if (isTauri) { void invoke<DeepLKeyStatus>("deepl_key_status").then(setKeyStatus).catch(() => setKeyStatus({ configured: false })); void checkForUpdate(); } }, []);
+  useEffect(() => { if (isTauri) { void invoke<DeepLKeyStatus>("deepl_key_status").then(setKeyStatus).catch(() => setKeyStatus({ configured: false })); void invoke<string>("app_version").then(setCurrentVersion).catch(() => setCurrentVersion("不可用")); void checkForUpdate(); } }, []);
   useEffect(() => {
     if (!isTauri) return;
     let unlisten: (() => void) | undefined;
@@ -495,7 +495,7 @@ function CodePreview({ text, zoom }: { text: string; zoom: number }) {
 }
 
 function UpdateCenter({ currentVersion, status, checking, installing, desktop, onCheck, onInstall, onClose }: { currentVersion?: string; status?: UpdateStatus; checking: boolean; installing: boolean; desktop: boolean; onCheck: () => void; onInstall: () => void; onClose: () => void }) {
-  return <div className="update-center" data-tauri-drag-region="false"><span className="current-version">当前版本 {currentVersion ? `v${currentVersion}` : "读取中…"}</span><button className="text-button" type="button" disabled={!desktop || checking || installing} onClick={onCheck}>{checking ? "正在检查…" : "检查更新"}</button>{status && <section className="update-result" aria-live="polite"><button className="update-result-close" type="button" aria-label="关闭更新提示" onClick={onClose}>×</button><strong>{status.available ? `发现 v${status.version}` : `已是最新版本（v${status.currentVersion}）`}</strong>{status.available && <><p>{status.releaseNotes?.trim() || "此版本未提供更新说明。"}</p><button className="button primary" type="button" disabled={installing} onClick={onInstall}>{installing ? "正在安装…" : "下载并安装"}</button></>}</section>}</div>;
+  return <div className="update-center" data-tauri-drag-region="false"><span className="current-version" aria-live="polite">当前版本 {currentVersion ? (currentVersion === "不可用" ? currentVersion : `v${currentVersion}`) : "读取中…"}</span><button className="text-button" type="button" disabled={!desktop || checking || installing} onClick={onCheck}>{checking ? "正在检查…" : "检查更新"}</button>{status && <section className="update-result" aria-live="polite"><button className="update-result-close" type="button" aria-label="关闭更新提示" onClick={onClose}>×</button><strong>{status.available ? `发现 v${status.version}` : `已是最新版本（v${status.currentVersion}）`}</strong>{status.available && <><p>{status.releaseNotes?.trim() || "此版本未提供更新说明。"}</p><button className="button primary" type="button" disabled={installing} onClick={onInstall}>{installing ? "正在安装…" : "下载并安装"}</button></>}</section>}</div>;
 }
 
 function SponsorAuthor({ open, onToggle, onClose }: { open: boolean; onToggle: () => void; onClose: () => void }) {
