@@ -172,7 +172,7 @@ fn run_launch_inner(wait_pid: u32, operation_id: &str, result_path: &Path) -> Re
     download_with_progress(client.get(&installer.browser_download_url).send().map_err(|_| "UPDATE_DOWNLOAD_FAILED: Could not download installer.")?, &path, &progress)?;
     progress.set(86, "正在校验更新包…");
     let arguments = Arguments { source: "app".into(), app_id: APP_ID.into(), wait_pid, installer: path, sha256, target_dir: record.install_location, expected_version: release.tag_name.trim_start_matches('v').into(), restart: true, result_path: result_path.to_path_buf(), operation_id: operation_id.into() };
-    update(&arguments, &record.version, Some(&progress))?;
+    update_locked(&arguments, &record.version, Some(&progress))?;
     progress.set(100, "更新完成，正在重新打开…");
     Ok(registry_record()?)
 }
@@ -225,6 +225,10 @@ fn run_update(arguments: Arguments) -> Result<(), String> {
 
 fn update(arguments: &Arguments, from_version: &str, progress: Option<&ProgressWindow>) -> Result<RegistryRecord, String> {
     let _lock = acquire_lock(&arguments.app_id)?;
+    update_locked(arguments, from_version, progress)
+}
+
+fn update_locked(arguments: &Arguments, from_version: &str, progress: Option<&ProgressWindow>) -> Result<RegistryRecord, String> {
     let target = arguments.target_dir.canonicalize().map_err(|_| "UPDATE_TARGET_FAILED: Target directory does not exist.".to_owned())?;
     let before = validate_install(&target)?;
     if before.version != from_version { return Err("UPDATE_REGISTRY_FAILED: Registry version changed before update started.".into()); }
