@@ -167,3 +167,12 @@ completedAtUtc
 4. 点“跳过此版本”：本次启动主程序，下次不提示相同版本；删除偏好 JSON 后再次提示。
 5. 工具箱 `apply --restart false` 后读取结果文件，显示“更新完成，可打开”。
 6. 卸载文档翻译器后确认其他 `Honsen Program` 子目录与其他 appId 注册表键仍存在。
+
+## 记错本：更新执行器不可回归项
+
+1. `--help` 是纯 CLI 路径：必须在复制 Runner、读取注册表和获取互斥锁之前直接输出帮助并退出。
+2. `launch` 获取了 `Global\HonsenUpdate-honsen_document-translator` 后，内部安装流程必须复用该锁；只有独立的 `apply` 入口自行获取锁。禁止同一任务重复申请并误报 `UPDATE_LOCKED`。
+3. 发布构建必须明确构建主程序 `tauri-app` 和 `HonsenUpdateRunner`。新增 Runner 二进制后，`Cargo.toml` 必须保留 `default-run = "tauri-app"`，否则 Inno 可能打入过期主程序并出现 `localhost` 页面。
+4. 更新 UI 不得直接启动可见的 `powershell.exe`。检查窗必须在三选项提示出现前关闭；确认更新后必须显示下载百分比、安装、验证与重启阶段。
+5. 主界面版本只从同目录 UTF-8 `honsen.app.json` 读取，不得依赖更新服务健康检查。读取失败必须显示“不可用”，不能永久显示“读取中…”。
+6. 每次发布后至少用上一正式版完成一次 E2E：提示更新 → 下载 → 安装 → 注册表/JSON/EXE 版本变更 → 自动启动新版。失败时先检查带 `operationId` 的结果 JSON 与 Inno 日志，禁止只凭弹窗判断成功。
