@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { degrees, PDFDocument } from "pdf-lib";
 import type { BoundingBox, DocumentModel, TextDirection, TextLine } from "@pdf-translator/document-model";
 import { renderCleanBackgroundPage } from "@pdf-translator/pdf-parser";
 
@@ -71,8 +71,8 @@ function placementForRun(run: TextLine["runs"][number], id: string, lineId: stri
 export function paintTranslatedPlacement(context: CanvasRenderingContext2D, placement: TranslatedPlacement, pageHeight: number, clearSourceText = true): void {
   const { bbox, text } = placement;
   const scale = context.canvas.height / pageHeight;
-  const padding = 2 * scale; const x = bbox.x * scale; const top = placementTop(pageHeight, bbox) * scale; const width = bbox.width * scale; const height = bbox.height * scale;
-  if (clearSourceText) { context.fillStyle = "#fff"; context.fillRect(x - padding, top - padding, width + padding * 2, height + padding * 2); }
+  const padding = 0.25 * scale; const maskPadding = 2 * scale; const x = bbox.x * scale; const top = placementTop(pageHeight, bbox) * scale; const width = bbox.width * scale; const height = bbox.height * scale;
+  if (clearSourceText) { context.fillStyle = "#fff"; context.fillRect(x - maskPadding, top - maskPadding, width + maskPadding * 2, height + maskPadding * 2); }
   if (!text.trim()) return;
   const sourceSize = placement.fontSize * scale;
   const innerHeight = Math.max(1, height - padding * 2);
@@ -86,3 +86,27 @@ export function paintTranslatedPlacement(context: CanvasRenderingContext2D, plac
 }
 
 function dataUrlBytes(value: string): Uint8Array { return Uint8Array.from(atob(value.split(",")[1]), (character) => character.charCodeAt(0)); }
+
+export async function combineBilingualPdf(source: Uint8Array, translated: Uint8Array): Promise<Uint8Array> {
+  const original = await PDFDocument.load(source);
+  const translation = await PDFDocument.load(translated);
+  if (original.getPageCount() !== translation.getPageCount()) throw new Error("PDF_EXPORT_FAILED: 页面数量不匹配。");
+  const output = await PDFDocument.create();
+  for (let index = 0; index < original.getPageCount(); index++) {
+    const originalPage = original.getPage(index);
+    const translatedPage = translation.getPage(index);
+    // Blank PDF pages can have no content stream, which pdf-lib cannot embed.
+    if (!originalPage.node.Contents()) originalPage.drawRectangle({ width: 0, height: 0 });
+    if (!translatedPage.node.Contents()) translatedPage.drawRectangle({ width: 0, height: 0 });
+    const crop = originalPage.getCropBox();
+    const [left, right] = await Promise.all([output.embedPage(originalPage, { left: crop.x, bottom: crop.y, right: crop.x + crop.width, top: crop.y + crop.height }), output.embedPage(translatedPage)]);
+    const rotation = ((originalPage.getRotation().angle % 360) + 360) % 360;
+    const leftWidth = rotation === 90 || rotation === 270 ? left.height : left.width;
+    const leftHeight = rotation === 90 || rotation === 270 ? left.width : left.height;
+    const page = output.addPage([leftWidth + right.width, Math.max(leftHeight, right.height)]);
+    const top = page.getHeight() - leftHeight;
+    page.drawPage(left, { x: rotation === 180 ? leftWidth : rotation === 270 ? leftWidth : 0, y: top + (rotation === 90 || rotation === 180 ? leftHeight : 0), rotate: degrees(-rotation) });
+    page.drawPage(right, { x: leftWidth, y: page.getHeight() - right.height });
+  }
+  return output.save();
+}

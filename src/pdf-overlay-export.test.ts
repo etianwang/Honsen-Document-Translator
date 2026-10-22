@@ -22,6 +22,12 @@ describe("translatedLines", () => {
     expect(fillText.mock.calls[0]?.[2]).toBeLessThan(360);
   });
 
+  it("keeps short translations close to the source font size", () => {
+    const context = { canvas: { width: 400, height: 400 }, font: "", fillStyle: "", textBaseline: "", direction: "ltr", textAlign: "left", measureText: () => ({ width: 20 }), fillRect: vi.fn(), fillText: vi.fn() } as unknown as CanvasRenderingContext2D;
+    paintTranslatedPlacement(context, { id: "line", lineId: "line", bbox: { x: 10, y: 10, width: 30, height: 10 }, text: "译文", fontSize: 10 }, 100, false);
+    expect(parseFloat(context.font)).toBeGreaterThan(32);
+  });
+
   it("does not paint a white source mask when using a clean background", () => {
     const fillRect = vi.fn(); const fillText = vi.fn();
     const context = { canvas: { width: 400, height: 400 }, font: "", fillStyle: "", textBaseline: "", direction: "ltr", textAlign: "left", measureText: () => ({ width: 20 }), fillRect, fillText } as unknown as CanvasRenderingContext2D;

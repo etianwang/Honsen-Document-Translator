@@ -10,7 +10,7 @@ import type { DocumentModel, DocumentPage, ParagraphModel, ProcessingStage, Tran
 import { translateDocument } from "@pdf-translator/translation-engine";
 import { DocumentPipeline } from "@pdf-translator/document-pipeline";
 import { configurePdfWorker, parsePdf, renderCleanBackgroundPages, renderPdfPages } from "@pdf-translator/pdf-parser";
-import { exportTranslatedPdf, placementTop, renderTranslatedPages, translatedPlacements } from "./pdf-overlay-export";
+import { combineBilingualPdf, exportTranslatedPdf, placementTop, renderTranslatedPages, translatedPlacements } from "./pdf-overlay-export";
 import pdfWorkerUrl from "../packages/pdf-parser/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import { TauriDeepLTranslator } from "./tauri-deepl-translator";
 import { TauriOcrProvider } from "./tauri-ocr-provider";
@@ -323,10 +323,11 @@ function App() {
     catch (error: unknown) { recordDiagnostic("credential", error); setMessage(userMessage(error, "保存 API Key 失败。")); }
   }
 
-  async function exportPdf(): Promise<void> {
+  async function exportPdf(bilingual = false): Promise<void> {
     if (!isTauri) { setMessage("DOM 调试仅支持 PDF 解析预览，请在桌面应用中导出。"); return; }
     if (!model || !canExport(phase)) { setMessage("请先完成翻译并确认译文后再导出 PDF。"); return; }
-    const path = await save({ defaultPath: `${targetLanguage.toLowerCase()}_${name?.replace(/\.pdf$/i, "") ?? "translated"}.pdf`, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    if (bilingual && wordLayoutMode) { setMessage("双语 PDF 需要关闭 Word 版式优先，并重新翻译。"); return; }
+    const path = await save({ defaultPath: `${bilingual ? "bilingual_" : ""}${targetLanguage.toLowerCase()}_${name?.replace(/\.pdf$/i, "") ?? "translated"}.pdf`, filters: [{ name: "PDF", extensions: ["pdf"] }] });
     if (!path) return;
     try {
       setStage("generating-pdf"); setPhase("exporting-pdf"); setMessage("Generating PDF...");
@@ -335,7 +336,8 @@ function App() {
         setStage("completed"); setPhase("review-translation"); setMessage("已按 Word 版式优先路径导出 PDF。"); return;
       }
       if (!sourceBytes) throw new Error("PDF_EXPORT_FAILED: 原始 PDF 数据不可用，请重新导入文件。");
-      await writeFile(path, await exportTranslatedPdf(sourceBytes, model, ocrPages));
+      const translated = await exportTranslatedPdf(sourceBytes, model, ocrPages);
+      await writeFile(path, bilingual ? await combineBilingualPdf(sourceBytes, translated) : translated);
       setStage("completed"); setPhase("review-translation"); setMessage("PDF exported.");
     } catch (error: unknown) {
       recordDiagnostic("pdf-export", error); setStage("failed"); setPhase("review-translation"); setMessage(userMessage(error, "PDF 导出失败，请重试。"));
@@ -410,7 +412,7 @@ function App() {
     setMessage("译文修改已应用，将随导出一并保存。");
   }
   const previewTerms = useMemo(
-    () => glossaryEntries.length > 3 ? [...glossaryEntries.slice(0, 2), glossaryEntries[glossaryEntries.length - 1]!] : glossaryEntries,
+    () => glossaryEntries.length > 6 ? [...glossaryEntries.slice(0, 5), glossaryEntries[glossaryEntries.length - 1]!] : glossaryEntries,
     [glossaryEntries],
   );
   const issues = model?.issues ?? [];
@@ -438,14 +440,15 @@ function App() {
       <aside className="glossary-card">
         <div className="card-title"><h2>▤ 术语表</h2></div>
         <p>使用 YAML 文件保持术语翻译一致。</p>
-        <div className="glossary-file"><strong>{glossaryName}</strong><span>● 已加载 {glossaryEntries.length} 条术语</span><button className="button secondary" type="button" onClick={chooseGlossary}>选择 / 更换文件</button>{glossaryName !== defaultGlossaryName && <button className="text-button" type="button" onClick={() => { setGlossaryName(defaultGlossaryName); setGlossaryEntries(defaultGlossaryEntries); setMessage("已恢复内置术语库。"); }}>恢复内置</button>}</div>
+        <div className="glossary-file"><div className="glossary-info"><strong title={glossaryName}>{glossaryName}</strong><span>● 已加载 {glossaryEntries.length} 条术语</span></div><button className="button secondary" type="button" onClick={chooseGlossary}>选择 / 更换文件</button>{glossaryName !== defaultGlossaryName && <button className="text-button" type="button" onClick={() => { setGlossaryName(defaultGlossaryName); setGlossaryEntries(defaultGlossaryEntries); setMessage("已恢复内置术语库。"); }}>恢复内置</button>}</div>
         {previewTerms.length > 0 && <ol className="yaml-preview">
-          {previewTerms.slice(0, 2).map((entry, index) => <li key={`${entry.source}-${index}`}><span className="yaml-index">{index + 1}.</span><code>{entry.source}: <b>{entry.target}</b></code></li>)}
-          {glossaryEntries.length > 3 && <li className="yaml-ellipsis" aria-label="中间术语已省略"><span className="yaml-index">…</span></li>}
-          {previewTerms.slice(2).map((entry, index) => <li key={`${entry.source}-${index + 2}`}><span className="yaml-index">{glossaryEntries.length > 3 ? glossaryEntries.length : index + 3}.</span><code>{entry.source}: <b>{entry.target}</b></code></li>)}
+          {previewTerms.map((entry, index) => <li key={`${entry.source}-${index}`}>
+            {glossaryEntries.length > 6 && index === 5 && <div className="yaml-ellipsis" aria-label="中间术语已省略">…</div>}
+            <details><summary><span className="yaml-index">{glossaryEntries.length > 6 && index === 5 ? glossaryEntries.length : index + 1}.</span><code>{entry.source}: <b>{entry.target}</b></code></summary><div className="term-details"><span>原文术语</span><strong>{entry.source}</strong><span>译文术语</span><strong>{entry.target}</strong></div></details>
+          </li>)}
         </ol>}
-        <div className="tip"><strong>💡 提示</strong><span>术语表会在翻译时优先应用，提升全篇一致性。</span></div>
-        <div className="exports">{sourceType === "pdf" ? <><button className="button secondary" type="button" onClick={exportDocx} disabled={!model || isBusy(stage)}>导出 DOCX（版式）</button><button className="button secondary" type="button" onClick={exportPdf} disabled={!model || isBusy(stage)}>导出 PDF</button></> : <><button className="button secondary" type="button" onClick={exportGenericNative} disabled={!activeGenericDocument?.translatedPath || isBusy(stage)}>导出 {sourceType === "code" ? activeGenericDocument?.sourcePath?.split(".").pop()?.toUpperCase() : sourceType === "word" ? "DOCX" : sourceType === "presentation" ? "PPTX" : sourceType === "spreadsheet" ? "XLSX" : /\.md(?:own)?$/i.test(activeGenericDocument?.sourcePath ?? "") ? "MD" : "TXT"}</button>{sourceType !== "code" && <button className="button secondary" type="button" onClick={exportGenericPdf} disabled={!activeGenericDocument?.translatedPath || isBusy(stage)}>导出 PDF</button>}</>}</div>
+        <div className="tip"><strong>💡 提示：</strong><span>术语表会在翻译时优先应用，提升全篇一致性。</span></div>
+        <div className={`exports${sourceType === "pdf" ? " pdf-exports" : ""}`}>{sourceType === "pdf" ? <><button className="button secondary" type="button" onClick={exportDocx} disabled={!model || isBusy(stage)}>导出 DOCX（版式）</button><button className="button secondary" type="button" onClick={() => void exportPdf()} disabled={!model || isBusy(stage)}>导出 PDF</button><button className="button secondary" type="button" onClick={() => void exportPdf(true)} disabled={!model || isBusy(stage)}>导出双语 PDF</button></> : <><button className="button secondary" type="button" onClick={exportGenericNative} disabled={!activeGenericDocument?.translatedPath || isBusy(stage)}>导出 {sourceType === "code" ? activeGenericDocument?.sourcePath?.split(".").pop()?.toUpperCase() : sourceType === "word" ? "DOCX" : sourceType === "presentation" ? "PPTX" : sourceType === "spreadsheet" ? "XLSX" : /\.md(?:own)?$/i.test(activeGenericDocument?.sourcePath ?? "") ? "MD" : "TXT"}</button>{sourceType !== "code" && <button className="button secondary" type="button" onClick={exportGenericPdf} disabled={!activeGenericDocument?.translatedPath || isBusy(stage)}>导出 PDF</button>}</>}</div>
       </aside>
     </section>
   </main>;
