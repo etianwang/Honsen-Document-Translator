@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "1.4.11"
+version = "1.4.12"
 default-run = "tauri-app"
 description = "A Tauri App"
 authors = ["you"]

@@ -1,5 +1,5 @@
 #define AppName "Honsen Document Translator"
-#define AppVersion "1.4.11"
+#define AppVersion "1.4.12"
 #define AppExeName "HonsenPdfTranslator.exe"
 #define HonsenAppId "honsen.document-translator"
 #define HonsenRegistryKey "Software\Honsen Program\Apps\" + HonsenAppId
@@ -52,15 +52,13 @@ Root: HKLM64; Subkey: "{#HonsenRegistryKey}"; ValueType: string; ValueName: "Lau
 ; Explicit product-owned legacy executable names only. Never scan user shortcut locations.
 Type: files; Name: "{app}\tauri-app.exe"
 Type: files; Name: "{app}\Honsen PDF Translator.exe"
-Type: files; Name: "{autodesktop}\Honsen PDF 翻译器.lnk"
-Type: files; Name: "{autoprograms}\Honsen PDF 翻译器\Honsen PDF 翻译器.lnk"
 
 [UninstallDelete]
 Type: files; Name: "{app}\honsen.app.json"
 
 [Icons]
-Name: "{group}\Honsen 文档翻译器"; Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch"; IconFilename: "{app}\{#AppExeName}"
-Name: "{autodesktop}\Honsen 文档翻译器"; Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch"; IconFilename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{group}\Honsen 文档翻译器"; Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch --app-id {#HonsenAppId} --source app"; IconFilename: "{app}\{#AppExeName}"
+Name: "{autodesktop}\Honsen 文档翻译器"; Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch --app-id {#HonsenAppId} --source app"; IconFilename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopShortcut}"; Flags: unchecked
@@ -140,11 +138,5 @@ begin
     WriteHonsenAppManifest;
 end;
 
-function IsSilentUpdate: Boolean;
-begin
-  Result := WizardSilent and (ExpandConstant('{param:HONSENUPDATER|0}') <> '1');
-end;
-
 [Run]
-Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch --wait-for-update"; Flags: nowait runasoriginaluser; Check: IsSilentUpdate
-Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch"; Description: "{cm:LaunchApplication}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch --app-id {#HonsenAppId} --source app"; Description: "{cm:LaunchApplication}"; Flags: nowait postinstall skipifsilent

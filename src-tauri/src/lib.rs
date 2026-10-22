@@ -1,6 +1,5 @@
 use std::{ffi::OsStr, fs, io::{BufRead, BufReader, Write}, os::windows::process::CommandExt, path::PathBuf, process::{Command, Stdio}, time::{Duration, SystemTime, UNIX_EPOCH}};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tauri::{Emitter, Manager};
 use winreg::{enums::*, RegKey};
 
@@ -243,30 +242,6 @@ fn update_status(update: Option<AvailableUpdate>) -> UpdateStatus {
         version: update.as_ref().map(|value| value.version.clone()),
         release_notes: update.map(|value| value.release_notes),
     }
-}
-
-#[tauri::command]
-async fn legacy_install_update(app: tauri::AppHandle) -> Result<(), String> {
-    let update = latest_update().await?.ok_or("UPDATE_NOT_AVAILABLE: No newer verified release is available.")?;
-    let bytes = update_client()?.get(&update.installer_url).send().await
-        .map_err(|_| "UPDATE_DOWNLOAD_FAILED: Could not download the installer.")?
-        .error_for_status().map_err(|_| "UPDATE_DOWNLOAD_FAILED: The installer download failed.")?
-        .bytes().await.map_err(|_| "UPDATE_DOWNLOAD_FAILED: Could not read the installer.")?;
-    let actual = format!("{:x}", Sha256::digest(&bytes));
-    if !actual.eq_ignore_ascii_case(&update.sha256) { return Err("UPDATE_CHECKSUM_FAILED: Downloaded installer did not match the published SHA-256 checksum.".into()); }
-    let installer = std::env::temp_dir().join(format!("honsen-pdf-translator-{}-setup.exe", update.version));
-    fs::write(&installer, bytes).map_err(|error| format!("UPDATE_DOWNLOAD_FAILED: {error}"))?;
-    let (target_dir, runner, _) = installed_update_paths()?;
-    let pid = std::process::id().to_string();
-    let installer = installer.to_string_lossy().into_owned();
-    let target_dir = target_dir.to_string_lossy().into_owned();
-    background_command(&runner).args([
-        "apply", "--source", "app", "--app-id", HONSEN_APP_ID, "--wait-pid", &pid,
-        "--installer", &installer, "--sha256", &update.sha256,
-        "--target-dir", &target_dir, "--expected-version", &update.version, "--restart", "true",
-    ]).spawn().map_err(|error| format!("UPDATE_RUNNER_START_FAILED: {error}"))?;
-    app.exit(0);
-    Ok(())
 }
 
 #[tauri::command]

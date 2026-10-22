@@ -1,5 +1,9 @@
 # Architecture
 
+## Mandatory desktop integration reading
+
+Before any agent changes installation, registry, manifest, Runner, updates, uninstall or release logic, read the four Toolbox contracts in the order specified in [AGENTS.md](../AGENTS.md#跨项目桌面契约强制必读). They are the cross-project source of truth; system and user instructions retain their higher priority. Report conflicts and follow the cross-project maintenance process before synchronizing implementations.
+
 ## Scope
 
 The desktop app translates selectable PDF text while retaining the source-page raster, images, stamps, and drawing geometry. The shared Document Intermediate Representation (DIR) carries text, image, and vector-path coordinates in PDF points.

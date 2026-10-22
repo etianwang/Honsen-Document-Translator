@@ -4,6 +4,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+foreach ($root in @('Registry::HKEY_LOCAL_MACHINE\Software\Honsen Program\Apps\honsen.document-translator', 'Registry::HKEY_LOCAL_MACHINE\Software\WOW6432Node\Honsen Program\Apps\honsen.document-translator', 'Registry::HKEY_CURRENT_USER\Software\Honsen Program\Apps\honsen.document-translator', 'Registry::HKEY_CURRENT_USER\Software\WOW6432Node\Honsen Program\Apps\honsen.document-translator')) {
+  if (Test-Path -LiteralPath $root) { throw 'Existing Honsen installation detected. Run this verification only in a clean isolated Windows environment.' }
+}
 $installerPath = (Resolve-Path -LiteralPath $Installer).Path
 $fixturePath = (Resolve-Path -LiteralPath $Fixture).Path
 $workingTemp = Join-Path $env:SystemDrive 'Temp'
@@ -60,14 +63,8 @@ try {
   if ($registry.AppId -ne 'honsen.document-translator' -or $registry.InstallLocation -ne $installRoot -or $registry.ExecutablePath -ne $app -or $registry.UpdateRunnerPath -ne $runner -or $registry.LauncherPath -ne $runner -or $registry.UpdateManifestUrl -ne $manifest.updateManifestUrl -or $registry.InstallScope -ne 'machine') {
     throw 'Honsen Program registry record is missing or inconsistent.'
   }
-  $deadline = (Get-Date).AddSeconds(15)
-  do {
-    $started = Get-CimInstance Win32_Process -Filter "Name='HonsenPdfTranslator.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and $_.ExecutablePath -ieq $app } | Select-Object -First 1
-    if ($started) { break }
-    Start-Sleep -Milliseconds 250
-  } while ((Get-Date) -lt $deadline)
-  if (-not $started) { throw 'Silent installer did not relaunch the application.' }
-  Stop-TestApplication $installRoot
+  $started = Get-CimInstance Win32_Process -Filter "Name='HonsenPdfTranslator.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and $_.ExecutablePath -ieq $app } | Select-Object -First 1
+  if ($started) { throw 'Silent installer unexpectedly started the application.' }
 
   & $pdftoppm -f 1 -l 1 -r 300 -png -singlefile $fixturePath $imagePrefix
   if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath "$imagePrefix.png")) { throw 'Bundled Poppler could not render the OCR fixture.' }

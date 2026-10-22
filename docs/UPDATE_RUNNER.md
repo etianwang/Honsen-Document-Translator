@@ -47,10 +47,11 @@ Runner 每次更新前确认固定 appId、注册表的安装目录/主程序/Ru
 开始菜单、桌面快捷方式和工具箱“打开”均调用：
 
 ```text
-<LauncherPath> launch
+<LauncherPath> launch --app-id honsen.document-translator --source app
 ```
 
 快捷方式显式使用 `HonsenPdfTranslator.exe` 的图标。
+工具箱使用 `--source toolbox`，现有 Runner 也接受其附加的 `--wait-pid`、`--operation-id` 和 `--result-path`。旧快捷方式只传 `launch` 时 Runner 仍采用兼容默认值。
 
 `launch` 流程：
 

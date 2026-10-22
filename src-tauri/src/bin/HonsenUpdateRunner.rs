@@ -6,6 +6,9 @@ use std::{env, ffi::OsStr, fs, io::{Read, Write}, os::windows::{ffi::OsStrExt, p
 use windows_sys::Win32::{Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_INVALID_PARAMETER, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT}, System::Threading::{CreateMutexW, OpenProcess, QueryFullProcessImageNameW, ReleaseMutex, TerminateProcess, WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE}};
 use winreg::{enums::*, RegKey};
 
+#[link(name = "kernel32")]
+extern "system" { fn MoveFileW(existing: *const u16, new_name: *const u16) -> i32; }
+
 const APP_ID: &str = "honsen.document-translator";
 const REGISTRY_KEY: &str = "Software\\Honsen Program\\Apps\\honsen.document-translator";
 const RUNNER_NAME: &str = "HonsenUpdateRunner.exe";
@@ -14,10 +17,13 @@ const EXE_NAME: &str = "HonsenPdfTranslator.exe";
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Manifest {
+    schema_version: u32,
     app_id: String,
+    display_name: String,
     version: String,
     executable: String,
     update_runner: String,
+    publisher: String,
     update_manifest_url: String,
 }
 
@@ -117,7 +123,7 @@ fn main() -> ExitCode {
 fn print_help(command: Option<&str>) {
     let usage = match command {
         Some("launch") | Some("repair") => "HonsenUpdateRunner.exe launch --app-id honsen.document-translator [--source app|toolbox] [--wait-pid PID] [--operation-id ID] [--result-path PATH]",
-        Some("apply") => "HonsenUpdateRunner.exe apply --source app|toolbox --app-id honsen.document-translator --wait-pid PID --installer PATH --sha256 SHA256 --target-dir PATH --expected-version VERSION --restart true|false [--operation-id ID] [--result-path PATH]",
+        Some("apply") => "HonsenUpdateRunner.exe apply --source app|toolbox --app-id honsen.document-translator --wait-pid PID --installer PATH --sha256 SHA256 --target-dir PATH --expected-version VERSION --restart true|false --operation-id GUID --result-path PATH",
         _ => "HonsenUpdateRunner.exe <launch|repair|apply> [options]",
     };
     println!("{usage}");
@@ -150,7 +156,15 @@ fn run_launch_inner(wait_pid: u32, operation_id: &str, result_path: &Path) -> Re
     let mut progress = ProgressWindow::start()?;
     let record = validate_install(&registry_record()?.install_location.canonicalize().map_err(|_| "UPDATE_TARGET_FAILED: InstallLocation is missing.")?)?;
     let client = reqwest::blocking::Client::builder().user_agent("Honsen-Document-Translator-Updater").timeout(Duration::from_secs(60)).build().map_err(|error| format!("UPDATE_CHECK_FAILED: {error}"))?;
-    let release = client.get(&record.update_manifest_url).send().map_err(|_| "UPDATE_CHECK_FAILED: Could not contact the update manifest.")?.error_for_status().map_err(|_| "UPDATE_CHECK_FAILED: The update manifest returned an error.")?.json::<GithubRelease>().map_err(|_| "UPDATE_CHECK_FAILED: Release metadata is invalid.")?;
+    let release = client.get(&record.update_manifest_url).send().and_then(|response| response.error_for_status()).and_then(|response| response.json::<GithubRelease>());
+    let release = match release {
+        Ok(release) => release,
+        Err(_) => {
+            progress.set(100, "无法检查更新，正在启动…"); drop(progress);
+            Command::new(&record.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?;
+            return Ok(record);
+        }
+    };
     if release.draft || release.prerelease || !is_newer(&release.tag_name, &record.version) || skipped_version().as_deref() == Some(release.tag_name.trim_start_matches('v')) {
         progress.set(100, "已是最新版本，正在启动…"); drop(progress);
         Command::new(&record.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?;
@@ -173,6 +187,7 @@ fn run_launch_inner(wait_pid: u32, operation_id: &str, result_path: &Path) -> Re
     progress.set(86, "正在校验更新包…");
     let arguments = Arguments { source: "app".into(), app_id: APP_ID.into(), wait_pid, installer: path, sha256, target_dir: record.install_location, expected_version: release.tag_name.trim_start_matches('v').into(), restart: true, result_path: result_path.to_path_buf(), operation_id: operation_id.into() };
     update_locked(&arguments, &record.version, Some(&progress))?;
+    if arguments.restart { let after = validate_install(&arguments.target_dir.canonicalize().map_err(|_| "UPDATE_TARGET_FAILED: InstallLocation is missing.")?)?; Command::new(&after.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?; }
     progress.set(100, "更新完成，正在重新打开…");
     Ok(registry_record()?)
 }
@@ -181,8 +196,7 @@ fn is_newer(candidate: &str, current: &str) -> bool { let parse = |value: &str| 
 
 fn copy_and_relaunch(raw: &[String]) -> Result<(), String> {
     let exe = env::current_exe().map_err(|error| format!("RUNNER_PATH_FAILED: {error}"))?;
-    let app_id = raw.windows(2).find_map(|pair| (pair[0] == "--app-id").then(|| pair[1].clone())).unwrap_or_else(|| APP_ID.into());
-    if app_id != APP_ID { return Err("UPDATE_IDENTITY_FAILED: Unexpected appId.".into()); }
+    let app_id = APP_ID;
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_nanos();
     let directory = env::temp_dir().join("Honsen Program").join("UpdateRunner").join(format!("{app_id}-{stamp}"));
     fs::create_dir_all(&directory).map_err(|error| format!("RUNNER_COPY_FAILED: {error}"))?;
@@ -206,26 +220,29 @@ fn parse_arguments(raw: &[String]) -> Result<Arguments, String> {
     let expected_version = value("--expected-version")?;
     if !valid_version(&expected_version) { return Err("RUNNER_ARGUMENTS_INVALID: --expected-version must be a numeric release version.".into()); }
     let restart = match value("--restart")?.as_str() { "true" => true, "false" => false, _ => return Err("RUNNER_ARGUMENTS_INVALID: --restart must be true or false.".into()) };
-    let operation_id = raw.windows(2).find_map(|pair| (pair[0] == "--operation-id").then(|| pair[1].clone())).unwrap_or_else(|| "apply".into());
-    let result_path = raw.windows(2).find_map(|pair| (pair[0] == "--result-path").then(|| PathBuf::from(&pair[1]))).unwrap_or(default_result_path(APP_ID, &operation_id)?);
-    Ok(Arguments { source, app_id, wait_pid, installer: PathBuf::from(value("--installer")?), sha256, target_dir: PathBuf::from(value("--target-dir")?), expected_version, restart, operation_id, result_path })
+    let operation_id = value("--operation-id")?;
+    if operation_id.len() != 36 || !operation_id.bytes().enumerate().all(|(i, b)| if [8, 13, 18, 23].contains(&i) { b == b'-' } else { b.is_ascii_hexdigit() }) { return Err("RUNNER_ARGUMENTS_INVALID: --operation-id must be a GUID.".into()); }
+    let result_path = PathBuf::from(value("--result-path")?);
+    let installer = PathBuf::from(value("--installer")?);
+    let target_dir = PathBuf::from(value("--target-dir")?);
+    if !result_path.is_absolute() || !installer.is_absolute() || !target_dir.is_absolute() || result_path.file_name().and_then(|v| v.to_str()) != Some(format!("{operation_id}.json").as_str()) { return Err("RUNNER_ARGUMENTS_INVALID: Absolute paths and an operation-specific result filename are required.".into()); }
+    Ok(Arguments { source, app_id, wait_pid, installer, sha256, target_dir, expected_version, restart, operation_id, result_path })
 }
 
 fn run_update(arguments: Arguments) -> Result<(), String> {
-    if arguments.app_id != APP_ID { return Err("UPDATE_IDENTITY_FAILED: Unexpected appId.".into()); }
+    let _operation_lock = acquire_lock(&format!("{APP_ID}-{}", arguments.operation_id))?;
+    if arguments.result_path.exists() { return Err("UPDATE_RESULT_FAILED: Result already exists.".into()); }
     let from_version = registry_record().ok().map(|record| record.version);
-    let outcome = update(&arguments, from_version.as_deref().unwrap_or_default(), None);
+    let lock = acquire_lock(APP_ID);
+    let outcome = if arguments.app_id != APP_ID { Err("UPDATE_IDENTITY_FAILED: Unexpected appId.".into()) } else { match &lock { Ok(_) => update_locked(&arguments, from_version.as_deref().unwrap_or_default(), None), Err(error) => Err(error.clone()) } };
     let result = match &outcome {
         Ok(record) => UpdateResult { app_id: arguments.app_id.clone(), operation_id: arguments.operation_id.clone(), status: "success".into(), source: arguments.source.clone(), from_version, to_version: arguments.expected_version.clone(), install_location: Some(record.install_location.to_string_lossy().into_owned()), executable_path: Some(record.executable_path.to_string_lossy().into_owned()), step: None, installer_exit_code: Some(0), installer_log_path: Some(installer_log_path(&arguments.app_id)?.to_string_lossy().into_owned()), message: None, completed_at_utc: completed_at() },
         Err(error) => UpdateResult { app_id: arguments.app_id.clone(), operation_id: arguments.operation_id.clone(), status: "failed".into(), source: arguments.source.clone(), from_version, to_version: arguments.expected_version.clone(), install_location: Some(arguments.target_dir.to_string_lossy().into_owned()), executable_path: None, step: Some(error.split(':').next().unwrap_or("UPDATE_FAILED").to_owned()), installer_exit_code: installer_exit_code(error), installer_log_path: Some(installer_log_path(&arguments.app_id)?.to_string_lossy().into_owned()), message: Some(error.clone()), completed_at_utc: completed_at() },
     };
-    write_result(&arguments.result_path, &result)?;
-    outcome.map(|_| ())
-}
-
-fn update(arguments: &Arguments, from_version: &str, progress: Option<&ProgressWindow>) -> Result<RegistryRecord, String> {
-    let _lock = acquire_lock(&arguments.app_id)?;
-    update_locked(arguments, from_version, progress)
+    write_apply_result(&arguments.result_path, &result)?;
+    let record = outcome?;
+    if arguments.restart { Command::new(&record.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?; }
+    Ok(())
 }
 
 fn update_locked(arguments: &Arguments, from_version: &str, progress: Option<&ProgressWindow>) -> Result<RegistryRecord, String> {
@@ -238,18 +255,42 @@ fn update_locked(arguments: &Arguments, from_version: &str, progress: Option<&Pr
     if let Some(progress) = progress { progress.set(90, "正在解压并安装更新…"); }
     let log = installer_log_path(&arguments.app_id)?;
     if let Some(parent) = log.parent() { fs::create_dir_all(parent).map_err(|error| format!("UPDATE_LOG_FAILED: {error}"))?; }
-    let exit = Command::new(&arguments.installer).args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/HONSENUPDATER=1", &format!("/DIR={}", before.install_location.display()), &format!("/LOG={}", log.display())])
-        .status().map_err(|error| format!("UPDATE_INSTALLER_START_FAILED: {error}"))?;
-    if !exit.success() { return Err(format!("INSTALLER_EXIT_{}: Inno Setup exited with {:?}.", exit.code().unwrap_or(-1), exit.code())); }
+    run_elevated_installer(&arguments.installer, &before.install_location, &log)?;
     if fs::read_to_string(&log).map_or(true, |content| content.trim().is_empty()) { return Err("UPDATE_LOG_FAILED: Inno Setup did not create a readable installation log.".into()); }
     if let Some(progress) = progress { progress.set(96, "正在验证新版本…"); }
     let after = validate_install(&target)?;
     if !same_install_path(&after.install_location, &target) || after.version != arguments.expected_version { return Err("UPDATE_VERIFICATION_FAILED: Installed registry state does not match the requested version and directory.".into()); }
     let manifest = load_manifest(&target)?;
     if manifest.version != arguments.expected_version { return Err("UPDATE_VERIFICATION_FAILED: honsen.app.json has an unexpected version.".into()); }
-    if release_version(&executable_version(&after.executable_path)?) != arguments.expected_version { return Err("UPDATE_VERIFICATION_FAILED: Main EXE has an unexpected file version.".into()); }
-    if arguments.restart { Command::new(&after.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?; }
+    if !versions_match(&executable_version(&after.executable_path)?, &arguments.expected_version) { return Err("UPDATE_VERIFICATION_FAILED: Main EXE has an unexpected file version.".into()); }
     Ok(after)
+}
+
+fn installer_outcome(output: &str) -> Result<(), String> {
+    match output.trim() {
+        "exit:0" => Ok(()),
+        "cancelled" => Err("UPDATE_UAC_CANCELLED: Administrator approval was declined.".into()),
+        value if value.starts_with("exit:") => match value[5..].parse::<i32>() {
+            Ok(code) => Err(format!("INSTALLER_EXIT_{code}: Inno Setup failed.")),
+            Err(_) => Err("UPDATE_INSTALLER_START_FAILED: Invalid installer response.".into()),
+        },
+        _ => Err("UPDATE_INSTALLER_START_FAILED: Could not start or wait for the installer.".into()),
+    }
+}
+
+fn quoted_path_argument(prefix: &str, path: &Path) -> Result<String, String> {
+    let value = path.to_str().ok_or("UPDATE_INSTALLER_START_FAILED: Invalid path.")?;
+    if value.contains('"') { return Err("UPDATE_INSTALLER_START_FAILED: Invalid path.".into()); }
+    let trailing = value.chars().rev().take_while(|c| *c == '\\').count();
+    Ok(format!("\"{prefix}{value}{}\"", "\\".repeat(trailing)))
+}
+
+fn run_elevated_installer(installer: &Path, target: &Path, log: &Path) -> Result<(), String> {
+    let params = format!("/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /HONSENUPDATER=1 {} {}", quoted_path_argument("/DIR=", target)?, quoted_path_argument("/LOG=", log)?);
+    let script = r#"try { $p = Start-Process -FilePath $env:HONSEN_INSTALLER -ArgumentList $env:HONSEN_INSTALLER_ARGS -Verb RunAs -Wait -PassThru -ErrorAction Stop; [Console]::Out.Write('exit:' + $p.ExitCode) } catch { $e = $_.Exception; while ($e) { if ($e.NativeErrorCode -eq 1223) { [Console]::Out.Write('cancelled'); exit }; $e = $e.InnerException }; [Console]::Out.Write('start-failed') }"#;
+    let output = hidden_powershell().args(["-NoProfile", "-NonInteractive", "-Command", script]).env("HONSEN_INSTALLER", installer).env("HONSEN_INSTALLER_ARGS", params).output().map_err(|error| format!("UPDATE_INSTALLER_START_FAILED: {error}"))?;
+    if !output.status.success() { return Err("UPDATE_INSTALLER_START_FAILED: Elevation helper failed.".into()); }
+    installer_outcome(&String::from_utf8_lossy(&output.stdout))
 }
 
 fn same_install_path(path: &Path, target: &Path) -> bool {
@@ -299,10 +340,21 @@ fn validate_install(target: &Path) -> Result<RegistryRecord, String> {
     let executable_parent = record.executable_path.parent().and_then(|path| path.canonicalize().ok());
     let runner_parent = record.update_runner_path.parent().and_then(|path| path.canonicalize().ok());
     if install != target || executable_parent.as_deref() != Some(target) || runner_parent.as_deref() != Some(target) { return Err("UPDATE_IDENTITY_FAILED: Target directory does not match the registered installation.".into()); }
-    if !record.executable_path.is_file() || !record.update_runner_path.is_file() { return Err("UPDATE_IDENTITY_FAILED: Registered executable or update runner is missing.".into()); }
+    for (path, name) in [(&record.executable_path, EXE_NAME), (&record.update_runner_path, RUNNER_NAME)] {
+        if path.file_name().and_then(|value| value.to_str()) != Some(name) || !path.is_file() || path.canonicalize().ok().and_then(|path| path.parent().map(Path::to_path_buf)).as_deref() != Some(target) {
+            return Err("UPDATE_IDENTITY_FAILED: Executable or runner is missing or resolves outside the installation.".into());
+        }
+    }
     let manifest = load_manifest(target)?;
-    if manifest.app_id != APP_ID || manifest.executable != EXE_NAME || manifest.update_runner != RUNNER_NAME || manifest.update_manifest_url.is_empty() || manifest.update_manifest_url != record.update_manifest_url || record.executable_path.file_name().and_then(|value| value.to_str()) != Some(manifest.executable.as_str()) { return Err("UPDATE_IDENTITY_FAILED: honsen.app.json does not match the registered application.".into()); }
+    if !manifest_matches(&manifest, &record.version, &record.update_manifest_url) { return Err("UPDATE_IDENTITY_FAILED: honsen.app.json does not match the registered application.".into()); }
     Ok(record)
+}
+
+fn manifest_matches(manifest: &Manifest, version: &str, url: &str) -> bool {
+    manifest.schema_version == 1 && manifest.app_id == APP_ID && !manifest.display_name.is_empty()
+        && valid_version(version) && manifest.version == version && manifest.executable == EXE_NAME
+        && manifest.update_runner == RUNNER_NAME && manifest.publisher == "Honsen"
+        && url.starts_with("https://") && manifest.update_manifest_url == url
 }
 
 fn load_manifest(target: &Path) -> Result<Manifest, String> {
@@ -407,7 +459,17 @@ fn executable_version(executable: &Path) -> Result<String, String> {
 }
 
 fn wide(value: &str) -> Vec<u16> { OsStr::new(value).encode_wide().chain(Some(0)).collect() }
-fn release_version(value: &str) -> String { value.trim_start_matches('v').split('.').take(3).collect::<Vec<_>>().join(".") }
+fn versions_match(actual: &str, expected: &str) -> bool {
+    let parse = |value: &str| -> Option<Vec<u32>> {
+        let parts = value.split('.').map(str::parse::<u32>).collect::<Result<Vec<_>, _>>().ok()?;
+        if !(3..=4).contains(&parts.len()) { return None; }
+        Some(parts)
+    };
+    match (parse(actual), parse(expected)) {
+        (Some(mut actual), Some(mut expected)) => { actual.resize(4, 0); expected.resize(4, 0); actual == expected }
+        _ => false,
+    }
+}
 fn valid_version(value: &str) -> bool { value.split('.').count() >= 3 && value.split('.').all(|part| !part.is_empty() && part.parse::<u32>().is_ok()) }
 fn installer_exit_code(error: &str) -> Option<i32> { error.strip_prefix("INSTALLER_EXIT_").and_then(|value| value.split(':').next()).and_then(|value| value.parse().ok()) }
 
@@ -430,10 +492,108 @@ fn completed_at() -> String {
         .unwrap_or_else(|| SystemTime::now().duration_since(UNIX_EPOCH).map(|value| value.as_secs().to_string()).unwrap_or_default())
 }
 fn write_result(path: &Path, result: &UpdateResult) -> Result<(), String> { fs::create_dir_all(path.parent().unwrap()).map_err(|error| format!("UPDATE_RESULT_FAILED: {error}"))?; let json = serde_json::to_vec_pretty(result).map_err(|error| format!("UPDATE_RESULT_FAILED: {error}"))?; let mut file = fs::File::create(path).map_err(|error| format!("UPDATE_RESULT_FAILED: {error}"))?; file.write_all(&json).map_err(|error| format!("UPDATE_RESULT_FAILED: {error}")) }
+fn write_apply_result(path: &Path, result: &UpdateResult) -> Result<(), String> {
+    let parent = path.parent().ok_or("UPDATE_RESULT_FAILED: Result parent is missing.")?;
+    fs::create_dir_all(parent).map_err(|error| format!("UPDATE_RESULT_FAILED: {error}"))?;
+    let temp = parent.join(format!(".{}-{}.tmp", result.operation_id, std::process::id()));
+    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temp).map_err(|error| format!("UPDATE_RESULT_FAILED: {error}"))?;
+    let write = || -> Result<(), String> {
+        serde_json::to_writer_pretty(&mut file, result).map_err(|error| format!("UPDATE_RESULT_FAILED: {error}"))?;
+        file.sync_all().map_err(|error| format!("UPDATE_RESULT_FAILED: {error}"))?;
+        drop(file);
+        let from: Vec<u16> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
+        let to: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        if unsafe { MoveFileW(from.as_ptr(), to.as_ptr()) } == 0 { return Err(format!("UPDATE_RESULT_FAILED: {}", std::io::Error::last_os_error())); }
+        Ok(())
+    };
+    let outcome = write();
+    if outcome.is_err() { let _ = fs::remove_file(temp); }
+    outcome
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installer_status_distinguishes_uac_and_exit_failures() {
+        assert!(installer_outcome("exit:0").is_ok());
+        assert!(installer_outcome("cancelled").unwrap_err().starts_with("UPDATE_UAC_CANCELLED:"));
+        assert!(installer_outcome("start-failed").unwrap_err().starts_with("UPDATE_INSTALLER_START_FAILED:"));
+        assert!(installer_outcome("exit:5").unwrap_err().starts_with("INSTALLER_EXIT_5:"));
+        assert!(installer_outcome("garbage").is_err());
+        assert_eq!(quoted_path_argument("/DIR=", Path::new("C:\\中文 目录\\")).unwrap(), "\"/DIR=C:\\中文 目录\\\\\"");
+    }
+
+    #[test]
+    fn apply_result_is_not_overwritten() {
+        let dir = env::temp_dir().join(format!("honsen-result-test-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("result.json");
+        let result = UpdateResult { app_id: APP_ID.into(), operation_id: "test".into(), status: "failed".into(), source: "app".into(), from_version: None, to_version: "1.0.0".into(), install_location: None, executable_path: None, step: Some("identity-validation".into()), installer_exit_code: None, installer_log_path: None, message: None, completed_at_utc: "2026-01-01T00:00:00Z".into() };
+        write_apply_result(&path, &result).unwrap();
+        let original = fs::read(&path).unwrap();
+        assert!(write_apply_result(&path, &result).is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn simultaneous_result_publications_have_one_winner() {
+        let dir = env::temp_dir().join(format!("honsen-concurrent-test-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir_all(&dir).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let threads: Vec<_> = (0..2).map(|index| {
+            let path = dir.join("result.json");
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let result = UpdateResult { app_id: APP_ID.into(), operation_id: format!("test-{index}"), status: "failed".into(), source: "app".into(), from_version: None, to_version: "1.0.0".into(), install_location: None, executable_path: None, step: Some("identity-validation".into()), installer_exit_code: None, installer_log_path: None, message: None, completed_at_utc: "2026-01-01T00:00:00Z".into() };
+                barrier.wait();
+                write_apply_result(&path, &result)
+            })
+        }).collect();
+        let successes = threads.into_iter().map(|thread| thread.join().unwrap()).filter(Result::is_ok).count();
+        assert_eq!(successes, 1);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        let parsed: serde_json::Value = serde_json::from_slice(&fs::read(dir.join("result.json")).unwrap()).unwrap();
+        assert_eq!(parsed["status"], "failed");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn result_write_failure_does_not_publish_success() {
+        let dir = env::temp_dir().join(format!("honsen-write-test-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir_all(&dir).unwrap();
+        let blocker = dir.join("not-a-directory");
+        fs::write(&blocker, b"unchanged").unwrap();
+        let result = UpdateResult { app_id: APP_ID.into(), operation_id: "test".into(), status: "success".into(), source: "app".into(), from_version: None, to_version: "1.0.0".into(), install_location: None, executable_path: None, step: None, installer_exit_code: Some(0), installer_log_path: None, message: None, completed_at_utc: "2026-01-01T00:00:00Z".into() };
+        assert!(write_apply_result(&blocker.join("result.json"), &result).is_err());
+        assert_eq!(fs::read(&blocker).unwrap(), b"unchanged");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn wrong_identity_writes_failure_result() {
+        let dir = env::temp_dir().join(format!("honsen-identity-test-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("result.json");
+        let args = Arguments { source: "toolbox".into(), app_id: "honsen.other".into(), wait_pid: 0, installer: dir.join("setup.exe"), sha256: "a".repeat(64), target_dir: dir.clone(), expected_version: "1.0.0".into(), restart: false, operation_id: "test".into(), result_path: path.clone() };
+        assert!(run_update(args).is_err());
+        let result: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(result["status"], "failed");
+        assert_eq!(result["step"], "UPDATE_IDENTITY_FAILED");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_manifest_version_mismatch() {
+        let manifest = r#"{"schemaVersion":1,"appId":"honsen.document-translator","displayName":"Honsen Document Translator","version":"1.4.10","executable":"HonsenPdfTranslator.exe","updateRunner":"HonsenUpdateRunner.exe","publisher":"Honsen","updateManifestUrl":"https://example.test"}"#;
+        let manifest: Manifest = serde_json::from_str(manifest).unwrap();
+        assert!(!manifest_matches(&manifest, "1.4.11", "https://example.test"));
+        assert!(manifest_matches(&manifest, "1.4.10", "https://example.test"));
+    }
 
     #[test]
     fn accepts_canonical_install_path_after_update() {
@@ -456,20 +616,23 @@ mod tests {
 
     #[test]
     fn accepts_the_shared_update_runner_contract() {
-        let args = vec!["runner".into(), "apply".into(), "--source".into(), "app".into(), "--app-id".into(), APP_ID.into(), "--wait-pid".into(), "0".into(), "--installer".into(), "update.exe".into(), "--sha256".into(), "a".repeat(64), "--target-dir".into(), "C:\\Honsen".into(), "--expected-version".into(), "1.3.2".into(), "--restart".into(), "true".into()];
+        let args = vec!["runner".into(), "apply".into(), "--source".into(), "app".into(), "--app-id".into(), APP_ID.into(), "--wait-pid".into(), "0".into(), "--installer".into(), "C:\\update.exe".into(), "--sha256".into(), "a".repeat(64), "--target-dir".into(), "C:\\Honsen".into(), "--expected-version".into(), "1.3.2".into(), "--restart".into(), "true".into(), "--operation-id".into(), "0f3b2a90-34c4-4d99-bd17-a964da43f6a6".into(), "--result-path".into(), "C:\\Results\\0f3b2a90-34c4-4d99-bd17-a964da43f6a6.json".into()];
         assert_eq!(parse_arguments(&args).unwrap().app_id, APP_ID);
+        assert!(parse_arguments(&args[..args.len()-4]).is_err());
     }
 
     #[test]
-    fn accepts_windows_four_part_file_versions() {
-        assert_eq!(release_version("1.4.0.0"), "1.4.0");
+    fn compares_all_significant_file_version_parts() {
+        assert!(versions_match("1.4.11.0", "1.4.11"));
+        assert!(versions_match("1.4.11.2", "1.4.11.2"));
+        assert!(!versions_match("1.4.11.3", "1.4.11.2"));
+        assert!(!versions_match("1.4.11.1", "1.4.11"));
     }
-
     #[test]
     fn keeps_the_toolbox_operation_result_path() {
-        let args = vec!["runner".into(), "apply".into(), "--source".into(), "toolbox".into(), "--app-id".into(), APP_ID.into(), "--wait-pid".into(), "0".into(), "--installer".into(), "update.exe".into(), "--sha256".into(), "a".repeat(64), "--target-dir".into(), "C:\\Honsen".into(), "--expected-version".into(), "1.4.3".into(), "--restart".into(), "false".into(), "--operation-id".into(), "op-1".into(), "--result-path".into(), "C:\\Results\\op-1.json".into()];
+        let args = vec!["runner".into(), "apply".into(), "--source".into(), "toolbox".into(), "--app-id".into(), APP_ID.into(), "--wait-pid".into(), "0".into(), "--installer".into(), "C:\\update.exe".into(), "--sha256".into(), "a".repeat(64), "--target-dir".into(), "C:\\Honsen".into(), "--expected-version".into(), "1.4.3".into(), "--restart".into(), "false".into(), "--operation-id".into(), "0f3b2a90-34c4-4d99-bd17-a964da43f6a6".into(), "--result-path".into(), "C:\\Results\\0f3b2a90-34c4-4d99-bd17-a964da43f6a6.json".into()];
         let parsed = parse_arguments(&args).unwrap();
-        assert_eq!(parsed.operation_id, "op-1"); assert_eq!(parsed.result_path, PathBuf::from("C:\\Results\\op-1.json"));
+        assert_eq!(parsed.operation_id, "0f3b2a90-34c4-4d99-bd17-a964da43f6a6"); assert_eq!(parsed.result_path, PathBuf::from("C:\\Results\\0f3b2a90-34c4-4d99-bd17-a964da43f6a6.json"));
     }
 
     #[test]
