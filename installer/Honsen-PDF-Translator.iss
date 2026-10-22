@@ -1,5 +1,5 @@
 #define AppName "Honsen Document Translator"
-#define AppVersion "1.4.10"
+#define AppVersion "1.4.11"
 #define AppExeName "HonsenPdfTranslator.exe"
 #define HonsenAppId "honsen.document-translator"
 #define HonsenRegistryKey "Software\Honsen Program\Apps\" + HonsenAppId
@@ -142,9 +142,9 @@ end;
 
 function IsSilentUpdate: Boolean;
 begin
-  Result := WizardSilent;
+  Result := WizardSilent and (ExpandConstant('{param:HONSENUPDATER|0}') <> '1');
 end;
 
 [Run]
-Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch"; Flags: nowait runasoriginaluser; Check: IsSilentUpdate
+Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch --wait-for-update"; Flags: nowait runasoriginaluser; Check: IsSilentUpdate
 Filename: "{app}\HonsenUpdateRunner.exe"; Parameters: "launch"; Description: "{cm:LaunchApplication}"; Flags: nowait postinstall skipifsilent

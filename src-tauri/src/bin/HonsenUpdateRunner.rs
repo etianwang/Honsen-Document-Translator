@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{env, ffi::OsStr, fs, io::{Read, Write}, os::windows::{ffi::OsStrExt, process::CommandExt}, path::{Path, PathBuf}, process::{Child, Command, ExitCode}, ptr, time::{Duration, SystemTime, UNIX_EPOCH}};
-use windows_sys::Win32::{Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_INVALID_PARAMETER, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT}, System::Threading::{CreateMutexW, OpenProcess, QueryFullProcessImageNameW, ReleaseMutex, TerminateProcess, WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE}};
+use windows_sys::Win32::{Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_INVALID_PARAMETER, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT}, System::Threading::{CreateMutexW, OpenProcess, QueryFullProcessImageNameW, ReleaseMutex, TerminateProcess, WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE}};
 use winreg::{enums::*, RegKey};
 
 const APP_ID: &str = "honsen.document-translator";
@@ -43,7 +43,7 @@ struct Arguments {
     result_path: PathBuf,
 }
 
-struct LaunchArguments { source: String, wait_pid: u32, operation_id: String, result_path: PathBuf }
+struct LaunchArguments { source: String, wait_pid: u32, operation_id: String, result_path: PathBuf, wait_for_update: bool }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -131,11 +131,11 @@ fn parse_launch(raw: &[String]) -> Result<LaunchArguments, String> {
     let result_path = value("--result-path").map(PathBuf::from).unwrap_or(default_result_path(APP_ID, &operation_id)?);
     let source = value("--source").unwrap_or("app");
     if source != "app" && source != "toolbox" { return Err("RUNNER_ARGUMENTS_INVALID: --source must be app or toolbox.".into()); }
-    Ok(LaunchArguments { source: source.to_owned(), wait_pid, operation_id, result_path })
+    Ok(LaunchArguments { source: source.to_owned(), wait_pid, operation_id, result_path, wait_for_update: raw.iter().any(|value| value == "--wait-for-update") })
 }
 
 fn run_launch(arguments: LaunchArguments) -> Result<(), String> {
-    let _lock = acquire_lock(APP_ID)?;
+    let _lock = if arguments.wait_for_update { wait_for_update_lock(APP_ID)? } else { acquire_lock(APP_ID)? };
     let before = registry_record().ok();
     let outcome = run_launch_inner(arguments.wait_pid, &arguments.operation_id, &arguments.result_path);
     let result = match &outcome {
@@ -238,18 +238,34 @@ fn update_locked(arguments: &Arguments, from_version: &str, progress: Option<&Pr
     if let Some(progress) = progress { progress.set(90, "正在解压并安装更新…"); }
     let log = installer_log_path(&arguments.app_id)?;
     if let Some(parent) = log.parent() { fs::create_dir_all(parent).map_err(|error| format!("UPDATE_LOG_FAILED: {error}"))?; }
-    let exit = Command::new(&arguments.installer).args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", &format!("/DIR={}", before.install_location.display()), &format!("/LOG={}", log.display())])
+    let exit = Command::new(&arguments.installer).args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/HONSENUPDATER=1", &format!("/DIR={}", before.install_location.display()), &format!("/LOG={}", log.display())])
         .status().map_err(|error| format!("UPDATE_INSTALLER_START_FAILED: {error}"))?;
     if !exit.success() { return Err(format!("INSTALLER_EXIT_{}: Inno Setup exited with {:?}.", exit.code().unwrap_or(-1), exit.code())); }
     if fs::read_to_string(&log).map_or(true, |content| content.trim().is_empty()) { return Err("UPDATE_LOG_FAILED: Inno Setup did not create a readable installation log.".into()); }
     if let Some(progress) = progress { progress.set(96, "正在验证新版本…"); }
     let after = validate_install(&target)?;
-    if after.install_location != target || after.version != arguments.expected_version { return Err("UPDATE_VERIFICATION_FAILED: Installed registry state does not match the requested version and directory.".into()); }
+    if !same_install_path(&after.install_location, &target) || after.version != arguments.expected_version { return Err("UPDATE_VERIFICATION_FAILED: Installed registry state does not match the requested version and directory.".into()); }
     let manifest = load_manifest(&target)?;
     if manifest.version != arguments.expected_version { return Err("UPDATE_VERIFICATION_FAILED: honsen.app.json has an unexpected version.".into()); }
     if release_version(&executable_version(&after.executable_path)?) != arguments.expected_version { return Err("UPDATE_VERIFICATION_FAILED: Main EXE has an unexpected file version.".into()); }
     if arguments.restart { Command::new(&after.executable_path).spawn().map_err(|error| format!("UPDATE_RESTART_FAILED: {error}"))?; }
     Ok(after)
+}
+
+fn same_install_path(path: &Path, target: &Path) -> bool {
+    path.canonicalize().is_ok_and(|path| path == target)
+}
+
+fn wait_for_update_lock(app_id: &str) -> Result<UpdateLock, String> {
+    let name = wide(&format!("Global\\HonsenUpdate-{}", app_id.replace('.', "_")));
+    unsafe {
+        let handle = CreateMutexW(ptr::null(), 0, name.as_ptr());
+        if handle.is_null() { return Err("UPDATE_LOCK_FAILED: Could not create the update mutex.".into()); }
+        match WaitForSingleObject(handle, 300_000) {
+            WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(UpdateLock(handle)),
+            _ => { CloseHandle(handle); Err("UPDATE_LOCKED: Timed out waiting for the update to finish.".into()) }
+        }
+    }
 }
 
 fn acquire_lock(app_id: &str) -> Result<UpdateLock, String> {
@@ -418,6 +434,25 @@ fn write_result(path: &Path, result: &UpdateResult) -> Result<(), String> { fs::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_canonical_install_path_after_update() {
+        let path = std::env::temp_dir();
+        let canonical = path.canonicalize().unwrap();
+        assert!(same_install_path(&path, &canonical));
+    }
+
+    #[test]
+    fn installer_launch_waits_for_an_in_progress_update() {
+        let id = format!("test.{}.{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos());
+        let lock = acquire_lock(&id).unwrap();
+        let (sent, received) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || { let _lock = wait_for_update_lock(&id).unwrap(); sent.send(()).unwrap(); });
+        assert!(received.recv_timeout(Duration::from_millis(100)).is_err());
+        drop(lock);
+        received.recv_timeout(Duration::from_secs(5)).unwrap();
+        worker.join().unwrap();
+    }
 
     #[test]
     fn accepts_the_shared_update_runner_contract() {
